@@ -13,7 +13,7 @@ experiment_name: "EXPERIMENT_NAME"          # 實驗完整名稱，例如: "BJT 
 
 # 範本與規格版本 (不可任意修改)
 template_version: "1.0"
-skill_version: "1.0"
+skill_version: "1.1"
 
 # 報告模式設定:
 # - "shared": 全組共用一份 report/report.md 共同撰寫

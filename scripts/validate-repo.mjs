@@ -81,11 +81,12 @@ if (fs.existsSync(configPath)) {
 const skillPath = path.join(targetDir, '.github', 'skills', 'experiment-report', 'SKILL.md');
 if (fs.existsSync(skillPath)) {
   const skillContent = fs.readFileSync(skillPath, 'utf8');
-  if (!skillContent.includes('name: experiment-report') || !skillContent.includes('version: "1.0"')) {
+  const versionMatch = skillContent.match(/version:\s*"([^"]+)"/);
+  if (!skillContent.includes('name: experiment-report') || !versionMatch) {
     console.error('❌ SKILL.md 標頭缺少 name 或 version 規格');
     hasError = true;
   } else {
-    console.log('✅ SKILL.md 規範與版本宣告合格 (v1.0)');
+    console.log(`✅ SKILL.md 規範與版本宣告合格 (v${versionMatch[1]})`);
   }
 }
 

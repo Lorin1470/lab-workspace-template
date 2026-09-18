@@ -1,10 +1,10 @@
 ---
 name: experiment-report
 description: 實驗課 GitHub 工作區核心 Agent Skill。負責實驗數據整理、照片分類、數據清洗、特性曲線分析、Markdown 報告撰寫與 Git 變更管理。嚴格遵循原始數據保護、白話中文 Commit 規範與強制使用者確認機制。
-version: "1.0"
+version: "1.1"
 ---
 
-# 實驗課 GitHub 工作區 Agent Skill (Version 1.0)
+# 實驗課 GitHub 工作區 Agent Skill (Version 1.1)
 
 本規範是 AI Agent 在本實驗 Repository 內進行任何分析、整理、代碼編寫與 Git 提交時的最高準則。任何 Agent 進入工作區時，必須嚴格遵守以下所有規則。
 
@@ -154,13 +154,49 @@ $$\text{raw/ (原始)} \xrightarrow{\text{清洗與正規化}} \text{processed/ 
 
 ---
 
-## 10. Activity Log 規則
+## 10. Activity Log 規則與真實性鐵律 (Truthfulness & Integrity)
 
-除了 Git 紀錄之外，系統維護一份操作層級的活動紀錄：
-1. **區分操作者**：明確標記發起來源為 `user` (使用者)、`agent` (AI 助手) 或 `web` (網頁端)。
-2. **可追溯性**：Agent 執行的任何分析與修改，必須紀錄是由哪位使用者發起（`requested_by`）以及哪位使用者確認（`approved_by`）。
-3. **格式規範**：
-   `[時間] [角色] [人員] 行動摘要 (關聯 Commit SHA)`
+除了 Git 歷史之外，系統維護一份操作層級的活動紀錄（Activity Log）。**Activity Log 必須 100% 反映實際發生的客觀操作，嚴禁由 Agent 自行推測、補寫、誇大或美化不存在的操作**。
+
+### 10.1 核心欄位規範（10 大真實性指標）
+
+1. **`target`（目標資源真實性）**：
+   - 必須精確對應實際被讀取、分析、建立、修改或刪除之檔案路徑（如 `report/report-studentA.md`）。
+   - **嚴禁記錄未實際接觸的檔案**（例如未曾讀寫 `analysis/` 則不可將其列為 target）。
+2. **`action`（階段精準性）**：
+   - 動作動詞必須客觀反映當前操作階段，嚴禁將「計畫中」寫成「已完成」。標準操作動詞定義：
+     * `request_proposal`：提出變更預覽與分析計畫（尚未執行修改）。
+     * `file_created`：目標檔案已實際建立於本地。
+     * `file_modified`：目標檔案已實際修改完成。
+     * `commit_created`：本地 Git Commit 已實際成功建立。
+     * `push_completed`：遠端 GitHub Push 已實際成功完成。
+     * `request_rejected`：因安全規則或權限越界直接拒絕之操作。
+3. **`files_changed`（差異可證性）**：
+   - 凡涉及檔案異動之事件，異動清單必須以實際 `git diff`、`git status` 或 Commit 歷史為唯一客觀依據。
+   - **嚴禁虛報未出現在實際差異中的檔案**。
+4. **`commit_sha`（提交存在性）**：
+   - 只有在本地或遠端實際成功產生 Git Commit 後方可填入對應的 Commit SHA。
+   - **未 Commit 前必須嚴格保持 `null` 或為空**，不得填入預測或假造的 SHA。
+5. **`push`（推送真實性）**：
+   - 只有在遠端推送實際成功後方可記錄 `push_completed`。
+   - 提出 Push 規劃或僅完成本地 Commit 時，嚴禁記錄為推送完成。
+6. **`approval`（授權獨立性）**：
+   - 必須精準反映使用者的授權狀態：`pending`（等待中）、`approved`（已授權）、`rejected`（已拒絕）。
+   - **分步授權原則（不可混淆）**：
+     * 使用者批准「修改檔案」$\neq$ 批准「Commit」。
+     * 使用者批准「Commit」$\neq$ 批准「Push」。
+     * 每一階段必須獨立取得授權，不可自動繼承或越權假設。
+7. **`requested_by`（發起人真實性）**：
+   - 必須如實記錄實際發出指令之使用者帳號（如 `studentA`）。
+   - Agent 嚴禁自行偽造或任意代換操作者。
+8. **`actor`（執行主體區分）**：
+   - 必須明確區分提出要求之使用者（`user` / 使用者帳號）與實際執行任務的 Agent（`agent:<名稱>`）。
+9. **`summary` 與【嚴禁紀錄漂移（No Record Drift）】**：
+   - 摘要內容必須完全依據實際發生之變更與使用者明確授權之項目撰寫。
+   - **嚴禁紀錄漂移（Hallucinated Summaries）**：例如使用者僅授權撰寫「實驗目的與原理」，摘要中**嚴禁自行補寫未經授權且實際 diff 不存在的「器材清單」、「分析圖表」或「量測結果」**。
+10. **安全拒絕紀錄（`request_rejected`）**：
+    - 被 Skill 規則直接拒絕的越權請求（如跨員修改他人報告、企圖寫入 `raw/`）應記錄為 `request_rejected`。
+    - 必須明確聲明「0 檔案變更、未產生任何 Commit」，Commit SHA 必須為 `null`。
 
 ---
 

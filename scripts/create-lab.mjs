@@ -270,7 +270,7 @@ async function main() {
       .replace(/\{\{REPORT_MODE\}\}/g, reportMode)
       .replace(/\{\{STATUS\}\}/g, '⬜ 尚未開始')
       .replace(/\{\{TEMPLATE_VERSION\}\}/g, '1.0')
-      .replace(/\{\{SKILL_VERSION\}\}/g, '1.0')
+      .replace(/\{\{SKILL_VERSION\}\}/g, '1.1')
       .replace(/\{\{MEMBERS_LIST\}\}/g, membersMarkdown);
     fs.writeFileSync(path.join(targetPath, 'README.md'), readmeContent, 'utf8');
 
@@ -413,7 +413,7 @@ experiment_id: "${experimentId}"
 experiment_name: "${experimentName}"
 
 template_version: "1.0"
-skill_version: "1.0"
+skill_version: "1.1"
 
 report_mode: "${reportMode}"
 status: "not_started"
