@@ -8,6 +8,7 @@
     "create-lab": "node scripts/create-lab.mjs",
     "sync-skill": "node scripts/sync-skill.mjs",
     "validate": "node scripts/validate-repo.mjs",
+    "test:activity": "node scripts/verify-activity-log.mjs",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build"
   },

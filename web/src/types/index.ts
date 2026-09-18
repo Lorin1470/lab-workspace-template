@@ -28,19 +28,25 @@ export interface ExperimentConfig {
   repository?: string;
 }
 
+export type ActorType = 'user' | 'agent' | 'web';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'none';
+
 export interface ActivityLogItem {
   id: string;
   repo_name: string;
   experiment_id: string;
   timestamp: string;
-  actor_type: 'user' | 'agent' | 'web';
+  actor_type: ActorType;
   actor_id: string;
   actor_name: string;
   actor_avatar?: string;
   requested_by?: string;
   approved_by?: string;
+  approval_status?: ApprovalStatus;
   action: string;
+  target?: string;
   summary: string;
+  files_changed?: string;
   commit_sha?: string;
   details_json?: string;
 }
