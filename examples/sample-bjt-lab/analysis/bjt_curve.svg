@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" width="100%" height="100%">
+  <rect width="600" height="400" fill="#ffffff"/>
+  <text x="300" y="30" font-family="sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#1e293b">2N3904 BJT 輸出特性曲線 (Ic vs Vce)</text>
+  
+  <!-- 格線與坐標軸 -->
+  <line x1="80" y1="340" x2="550" y2="340" stroke="#64748b" stroke-width="2"/>
+  <line x1="80" y1="340" x2="80" y2="60" stroke="#64748b" stroke-width="2"/>
+  
+  <!-- 網格虛線 -->
+  <line x1="80" y1="270" x2="550" y2="270" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4"/>
+  <line x1="80" y1="200" x2="550" y2="200" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4"/>
+  <line x1="80" y1="130" x2="550" y2="130" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4"/>
+  
+  <line x1="200" y1="340" x2="200" y2="60" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4"/>
+  <line x1="320" y1="340" x2="320" y2="60" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4"/>
+  <line x1="440" y1="340" x2="440" y2="60" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4"/>
+
+  <!-- 軸標籤 -->
+  <text x="315" y="380" font-family="sans-serif" font-size="13" text-anchor="middle" fill="#334155">集極-射極電壓 Vce (V)</text>
+  <text x="25" y="200" font-family="sans-serif" font-size="13" text-anchor="middle" transform="rotate(-90 25 200)" fill="#334155">集極電流 Ic (mA)</text>
+
+  <!-- 刻度值 -->
+  <text x="80" y="360" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#64748b">0</text>
+  <text x="200" y="360" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#64748b">2</text>
+  <text x="320" y="360" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#64748b">4</text>
+  <text x="440" y="360" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#64748b">6</text>
+  
+  <text x="70" y="275" font-family="sans-serif" font-size="11" text-anchor="end" fill="#64748b">1.0</text>
+  <text x="70" y="205" font-family="sans-serif" font-size="11" text-anchor="end" fill="#64748b">2.0</text>
+  <text x="70" y="135" font-family="sans-serif" font-size="11" text-anchor="end" fill="#64748b">3.0</text>
+
+  <!-- 曲線 Ib = 30uA -->
+  <path d="M 80 340 Q 110 140 140 133 L 540 115" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+  <text x="545" y="115" font-family="sans-serif" font-size="11" fill="#2563eb">Ib = 30 μA</text>
+
+  <!-- 曲線 Ib = 20uA -->
+  <path d="M 80 340 Q 110 210 140 200 L 540 188" fill="none" stroke="#16a34a" stroke-width="2.5"/>
+  <text x="545" y="188" font-family="sans-serif" font-size="11" fill="#16a34a">Ib = 20 μA</text>
+
+  <!-- 曲線 Ib = 10uA -->
+  <path d="M 80 340 Q 110 280 140 270 L 540 262" fill="none" stroke="#ea580c" stroke-width="2.5"/>
+  <text x="545" y="262" font-family="sans-serif" font-size="11" fill="#ea580c">Ib = 10 μA</text>
+
+  <!-- 區域標註 -->
+  <rect x="80" y="60" width="40" height="280" fill="#fef08a" opacity="0.2"/>
+  <text x="100" y="80" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#854d0e">飽和區</text>
+  <text x="320" y="80" font-family="sans-serif" font-size="11" text-anchor="middle" fill="#1e40af">主動工作區 (Active Region)</text>
+</svg>

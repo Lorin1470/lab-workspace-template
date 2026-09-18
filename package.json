@@ -1,0 +1,23 @@
+{
+  "name": "lab-workspace-template",
+  "version": "1.0.0",
+  "description": "通用實驗課 GitHub 工作區母倉庫 (Template, Agent Skill, Web App, CLI)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "create-lab": "node scripts/create-lab.mjs",
+    "sync-skill": "node scripts/sync-skill.mjs",
+    "validate": "node scripts/validate-repo.mjs",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build"
+  },
+  "keywords": [
+    "github-workspace",
+    "experiment-template",
+    "agent-skill",
+    "cloudflare-pages",
+    "lab-management"
+  ],
+  "author": "Lab Workspace System",
+  "license": "MIT"
+}

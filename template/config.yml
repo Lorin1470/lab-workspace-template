@@ -1,0 +1,42 @@
+# ==========================================
+# 實驗課 GitHub 工作區設定檔 (config.yml)
+# ==========================================
+# 本設定檔為實驗工作區的資料核心，Agent 與 Web UI 均依此運作。
+
+# 課程與實驗基本資訊
+course_id: "COURSE_ID_PLACEHOLDER"          # 例如: "EE201"
+course_name: "COURSE_NAME_PLACEHOLDER"      # 例如: "電子學實驗"
+semester: "114-1"                           # 例如: "114-1"
+
+experiment_id: "lab-01"                     # 實驗代號，例如: "lab-01", "lab-03"
+experiment_name: "EXPERIMENT_NAME"          # 實驗完整名稱，例如: "BJT 雙極性接面電晶體特性量測"
+
+# 範本與規格版本 (不可任意修改)
+template_version: "1.0"
+skill_version: "1.0"
+
+# 報告模式設定:
+# - "shared": 全組共用一份 report/report.md 共同撰寫
+# - "separate": 共用 raw/photos/processed/analysis，但個人報告分開為 report/report-<github_username>.md
+report_mode: "shared"
+
+# 目前實驗進度狀態:
+# 可選值:
+# - not_started       (⬜ 尚未開始)
+# - in_progress       (🟡 實驗進行中)
+# - data_processing   (🔵 資料整理中)
+# - report_writing    (🟠 報告撰寫中)
+# - completed         (🟢 已完成)
+status: "not_started"
+
+# 成員名單 (用於權限檢驗與貢獻標記)
+members:
+  - github: "MEMBER_1_GITHUB"
+    name: "學生姓名A"
+    role: "組長"
+  - github: "MEMBER_2_GITHUB"
+    name: "學生姓名B"
+    role: "組員"
+
+# 建立時間 (自動產生)
+created_at: "2026-09-18"

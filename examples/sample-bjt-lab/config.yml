@@ -1,0 +1,19 @@
+course_id: "EE201"
+course_name: "電子學實驗"
+semester: "114-1"
+
+experiment_id: "lab-03"
+experiment_name: "BJT 雙極性接面電晶體特性量測"
+
+template_version: "1.0"
+skill_version: "1.0"
+
+report_mode: "shared"
+status: "completed"
+
+members:
+  - github: "sample-student"
+    name: "示範學生"
+    role: "組長"
+
+created_at: "2026-09-18"
