@@ -290,11 +290,33 @@ export const onRequest = async (context: any) => {
 
     // 2. 系統狀態與環境檢查
     if (path === 'status') {
+      let d1Connected = false;
+      let hasActivityTable = false;
+
+      if (env.DB) {
+        try {
+          const ping = await env.DB.prepare('SELECT 1 as ping').first();
+          if (ping && ping.ping === 1) {
+            d1Connected = true;
+          }
+          const table = await env.DB.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='activity_logs'"
+          ).first();
+          if (table && table.name === 'activity_logs') {
+            hasActivityTable = true;
+          }
+        } catch {
+          // 容錯降級，保持健康檢查回應
+        }
+      }
+
       return new Response(
         JSON.stringify({
           status: 'online',
           service: 'lab-workspace-web',
           hasD1: !!env.DB,
+          d1Connected,
+          hasActivityTable,
           hasActivitySecret: !!(
             env.ACTIVITY_LOG_SECRET ||
             (typeof process !== 'undefined' && process.env ? process.env.ACTIVITY_LOG_SECRET : undefined)
