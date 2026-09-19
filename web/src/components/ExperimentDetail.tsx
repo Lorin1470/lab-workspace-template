@@ -96,8 +96,12 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   const [membersLoading, setMembersLoading] = useState(false);
   const [activityLimit, setActivityLimit] = useState(50);
 
-  // 權限判斷：依據傳入之 userRole
-  const isTeacher = userRole === 'teacher';
+  // 權限判斷：只要是課程或實驗協作者，皆具備操作與管理權限
+  const isCollaborator = Boolean(
+    userRole ||
+    course?.role ||
+    (user && members.some((m) => String(m.github_id) === String(user.github_id) && m.status === 'active'))
+  );
 
   // Modal 控制
   const [isEditExpOpen, setIsEditExpOpen] = useState(false);
@@ -427,7 +431,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
           </div>
 
           <div className="flex items-center space-x-2 self-end md:self-auto flex-wrap">
-            {isTeacher && (
+            {isCollaborator && (
               <>
                 <button
                   onClick={() => {
@@ -538,7 +542,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 </p>
               </div>
             </div>
-            {isTeacher && (
+            {isCollaborator && (
               <button
                 onClick={handleProvision}
                 disabled={isProvisioning}
@@ -561,13 +565,13 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 </p>
                 <p className="text-amber-800 mt-0.5">
                   目標儲存庫：<span className="font-mono font-semibold">{experiment.repository}</span>。
-                  {isTeacher
-                    ? ' 授課教師可直接點擊右側按鈕，系統將自動透過 GitHub App 與官方範本初始化該儲存庫。'
-                    : ' 此實驗專案尚未在 GitHub 上初始化，請待授課教師完成遠端儲存庫建立。'}
+                  {isCollaborator
+                    ? ' 協作者可直接點擊右側按鈕，系統將自動透過 GitHub App 與官方範本初始化該儲存庫。'
+                    : ' 此實驗專案尚未在 GitHub 上初始化，請待專案協作者完成遠端儲存庫建立。'}
                 </p>
               </div>
             </div>
-            {isTeacher && (
+            {isCollaborator && (
               <button
                 onClick={handleProvision}
                 disabled={isProvisioning}
@@ -830,7 +834,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 指派至本實驗的組員清單（必須為所屬課程的 Active 成員）。
               </p>
 
-              {isTeacher && (
+              {isCollaborator && (
                 <button
                   onClick={() => {
                     setModalError(null);
@@ -860,7 +864,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                         <th className="px-5 py-3">實驗角色</th>
                         <th className="px-5 py-3">組別 (Group)</th>
                         <th className="px-5 py-3">狀態</th>
-                        {isTeacher && <th className="px-5 py-3 text-right">操作</th>}
+                        {isCollaborator && <th className="px-5 py-3 text-right">操作</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -904,7 +908,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                                 </span>
                               )}
                             </td>
-                            {isTeacher && (
+                            {isCollaborator && (
                               <td className="px-5 py-3.5 text-right">
                                 <button
                                   onClick={() => {
@@ -925,7 +929,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                       })}
                       {members.length === 0 && (
                         <tr>
-                          <td colSpan={isTeacher ? 6 : 5} className="text-center py-8 text-slate-400 text-xs">
+                          <td colSpan={isCollaborator ? 6 : 5} className="text-center py-8 text-slate-400 text-xs">
                             目前尚未指派成員至本實驗專案
                           </td>
                         </tr>

@@ -78,8 +78,8 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
   const [members, setMembers] = useState<CourseMembership[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 權限判斷：依據 course.role
-  const isTeacher = course.role === 'teacher';
+  // 權限判斷：只要是課程成員（擁有 active 角色），皆具備協作者操作與管理權限
+  const isCollaborator = !!course.role;
 
   // Modal 狀態
   const [isEditCourseOpen, setIsEditCourseOpen] = useState(false);
@@ -329,8 +329,8 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                 </span>
                 {getStatusBadge(course.status)}
                 {course.role && (
-                  <span className="text-xs font-semibold px-2 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200">
-                    我的角色：{course.role === 'teacher' ? '授課教師' : course.role === 'assistant' ? '助教' : '學生'}
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200">
+                    我的身分：協作者 ({course.role})
                   </span>
                 )}
               </div>
@@ -352,7 +352,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
 
-            {isTeacher && (
+            {isCollaborator && (
               <button
                 onClick={() => {
                   setModalError(null);
@@ -417,7 +417,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
               遵循「一節課一 Repo」架構，各實驗專案獨立擁有獨立的 Git 工作區與稽核日誌。
             </p>
 
-            {isTeacher && course.status === 'active' && (
+            {isCollaborator && course.status === 'active' && (
               <button
                 onClick={() => {
                   setModalError(null);
@@ -494,9 +494,9 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
               <FlaskConical className="w-8 h-8 mx-auto text-slate-300" />
               <p className="text-sm font-semibold text-slate-700">此課程目前尚未建立任何實驗專案</p>
               <p className="text-xs text-slate-400">
-                {isTeacher
+                {isCollaborator
                   ? '點擊右上角「建立新實驗專案」新增課堂實驗，並指定專屬 GitHub Repository。'
-                  : '授課教師尚未發布本課程之實驗項目。'}
+                  : '目前尚未建立本課程之實驗項目。'}
               </p>
             </div>
           )}
@@ -511,7 +511,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
               課程成員名單作為 Web 權限唯一的權威依據（D1 Course Membership Authority）。
             </p>
 
-            {isTeacher && course.status === 'active' && (
+            {isCollaborator && course.status === 'active' && (
               <button
                 onClick={() => {
                   setModalError(null);
@@ -535,7 +535,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                     <th className="px-5 py-3">課程角色</th>
                     <th className="px-5 py-3">狀態</th>
                     <th className="px-5 py-3">加入時間</th>
-                    {isTeacher && <th className="px-5 py-3 text-right">操作</th>}
+                    {isCollaborator && <th className="px-5 py-3 text-right">操作</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -592,7 +592,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                         <td className="px-5 py-3.5 text-xs text-slate-400">
                           {m.created_at?.slice(0, 10)}
                         </td>
-                        {isTeacher && (
+                        {isCollaborator && (
                           <td className="px-5 py-3.5 text-right">
                             <button
                               onClick={() => {
@@ -612,7 +612,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   })}
                   {members.length === 0 && (
                     <tr>
-                      <td colSpan={isTeacher ? 6 : 5} className="text-center py-8 text-slate-400 text-xs">
+                      <td colSpan={isCollaborator ? 6 : 5} className="text-center py-8 text-slate-400 text-xs">
                         目前尚無任何成員
                       </td>
                     </tr>
@@ -672,10 +672,10 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                 >
                   <option value="active">進行中 (Active)</option>
                   <option value="archived">已封存 (Archived - 唯讀查看)</option>
-                  <option value="inactive">已停用 (Inactive - 僅教師可見)</option>
+                  <option value="inactive">已停用 (Inactive - 僅協作者可見)</option>
                 </select>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  封存後將關閉所有寫入權限；停用後學生將無法檢視本課程。
+                  封存後將關閉所有寫入權限；停用後僅本課程協作者可見。
                 </p>
               </div>
 
@@ -758,7 +758,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   required
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
-                  一節課一 Repo 唯一綁定。建立實驗後，教師可於實驗詳情頁一鍵透過 GitHub App 初始化遠端儲存庫。
+                  一節課一 Repo 唯一綁定。建立實驗後，協作者可於實驗詳情頁一鍵透過 GitHub App 初始化遠端儲存庫。
                 </p>
               </div>
 
@@ -850,9 +850,9 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   onChange={(e) => setNewMemberRole(e.target.value as any)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
                 >
-                  <option value="student">學生 (Student - 僅能查看與編輯所屬實驗)</option>
-                  <option value="assistant">助教 (Assistant - 可查閱全班實驗與歷史日誌)</option>
-                  <option value="teacher">教師 (Teacher - 完整管理權限)</option>
+                  <option value="student">學生 (Student)</option>
+                  <option value="assistant">助教 (Assistant)</option>
+                  <option value="teacher">教師 (Teacher)</option>
                 </select>
               </div>
 
@@ -921,7 +921,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   <option value="suspended">停權 (Suspended)</option>
                 </select>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  注意：依據系統安全規則，當課程僅存唯一一位活躍教師時，禁止降級或停用。
+                  設定該成員在此課程工作區之角色與狀態。
                 </p>
               </div>
 

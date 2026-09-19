@@ -42,9 +42,8 @@ export const CourseList: React.FC<CourseListProps> = ({
   const [newSemester, setNewSemester] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
-  // 判斷使用者是否有 Teacher 權限（在任一課程中是 teacher，或者無任何課程但已登入以嘗試建立首門課）
-  const isTeacherAnywhere =
-    courses.some((c) => c.role === 'teacher') || (user !== null && courses.length === 0);
+  // 登入使用者即可建立新課程工作區（同儕協作模型）
+  const canCreateCourse = user !== null;
 
   const filteredCourses = courses.filter((c) => {
     const term = searchTerm.toLowerCase().trim();
@@ -174,7 +173,7 @@ export const CourseList: React.FC<CourseListProps> = ({
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
 
-          {isTeacherAnywhere && (
+          {canCreateCourse && (
             <button
               onClick={() => setIsCreateOpen(true)}
               className="inline-flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors cursor-pointer shadow-sm"
@@ -196,7 +195,7 @@ export const CourseList: React.FC<CourseListProps> = ({
             <div>
               <h4 className="font-semibold text-slate-900">使用 GitHub 帳號登入</h4>
               <p className="text-sm text-slate-600 mt-0.5">
-                登入後系統將依據您的 D1 課程成員身分（教師、助教或學生）載入所屬實驗專案與專屬權限。
+                登入後系統將載入您參與的實驗課程與專屬工作區，與同學共同管理專案與實驗報告。
               </p>
             </div>
           </div>
@@ -298,10 +297,10 @@ export const CourseList: React.FC<CourseListProps> = ({
             {searchTerm
               ? '請嘗試使用其他關鍵字或清除搜尋條件。'
               : user
-              ? '您尚未被加入任何實驗課程成員名單。請向授課教師索取邀請加入，或若是教師請點擊上方按鈕建立課程。'
+              ? '您尚未加入任何實驗課程。可點擊上方按鈕建立新課程，或請同學將您加入現有課程協作者名單。'
               : '請先透過右上角或上方按鈕使用 GitHub 登入以檢視個人課程。'}
           </p>
-          {isTeacherAnywhere && !searchTerm && (
+          {canCreateCourse && !searchTerm && (
             <button
               onClick={() => setIsCreateOpen(true)}
               className="mt-2 inline-flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-colors cursor-pointer"
