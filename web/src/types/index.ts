@@ -73,3 +73,61 @@ export interface AuthUser {
   display_name: string | null;
   avatar_url: string | null;
 }
+
+export type CourseRole = 'teacher' | 'assistant' | 'student' | 'guest';
+export type ExperimentRole = 'assistant' | 'student';
+
+export interface Course {
+  id: string;
+  course_code: string;
+  name: string;
+  semester: string;
+  created_by_github_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Experiment {
+  id: string;
+  course_id: string;
+  experiment_code: string;
+  name: string;
+  repository: string;
+  report_mode: ReportMode;
+  config_version: string;
+  status: ExperimentStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CourseMembership {
+  id: string;
+  course_id: string;
+  github_id: string;
+  username: string;
+  role: CourseRole;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExperimentMembership {
+  id: string;
+  experiment_id: string;
+  github_id: string;
+  username: string;
+  role: ExperimentRole;
+  group_name?: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PermissionResult {
+  allowed: boolean;
+  role: CourseRole;
+  reason?: string;
+  course?: Course | null;
+  experiment?: Experiment | null;
+  report_mode?: ReportMode;
+}

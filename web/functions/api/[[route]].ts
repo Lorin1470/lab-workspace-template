@@ -8,6 +8,7 @@ interface Env {
   ACTIVITY_LOG_SECRET?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
+  INITIAL_ADMIN_GITHUB_ID?: string;
 }
 
 // 雜湊 Session Token (SHA-256)
@@ -31,6 +32,27 @@ function parseCookies(header: string | null): Record<string, string> {
   return cookies;
 }
 
+// 安全執行 D1 查詢取第一筆 (相容 mock 與原生 D1)
+async function safeD1First(stmt: any): Promise<any> {
+  if (!stmt) return null;
+  if (typeof stmt.first === 'function') {
+    try {
+      return await stmt.first();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof stmt.all === 'function') {
+    try {
+      const res = await stmt.all();
+      return res?.results?.[0] || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 // 依據 Cookie 驗證並取得 Session 使用者
 async function getSessionUser(request: Request, env: Env): Promise<{
   session_id: string;
@@ -47,11 +69,12 @@ async function getSessionUser(request: Request, env: Env): Promise<{
     return null;
   }
   const hashedId = await hashSessionToken(rawToken.trim());
-  const row: any = await env.DB.prepare(
+  const stmt = env.DB.prepare(
     'SELECT session_id, github_id, username, display_name, avatar_url, expires_at FROM user_sessions WHERE session_id = ?'
-  ).bind(hashedId).first();
+  ).bind(hashedId);
+  const row: any = await safeD1First(stmt);
 
-  if (!row) return null;
+  if (!row || !row.session_id) return null;
 
   // 檢查是否過期
   if (new Date(row.expires_at).getTime() < Date.now()) {
@@ -62,20 +85,277 @@ async function getSessionUser(request: Request, env: Env): Promise<{
   return row;
 }
 
+// 1. 安全路徑正規化 (Repository-relative path normalization)
+export function normalizeRepoPath(rawPath: string | null | undefined): string {
+  if (!rawPath || typeof rawPath !== 'string') return '';
+  let decoded = rawPath;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    decoded = rawPath;
+  }
+  const cleaned = decoded.trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  const parts = cleaned.split('/');
+  const safeParts: string[] = [];
+  for (const part of parts) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      safeParts.pop();
+    } else {
+      safeParts.push(part);
+    }
+  }
+  return safeParts.join('/');
+}
+
+// 2. 檢查是否屬於 raw/ 聖域 (Immutable Raw Sanctuary)
+export function isRawSanctuaryPath(normalizedPath: string): boolean {
+  if (!normalizedPath) return false;
+  return normalizedPath === 'raw' || normalizedPath.startsWith('raw/');
+}
+
+export interface PermissionResult {
+  allowed: boolean;
+  role: 'teacher' | 'assistant' | 'student' | 'guest';
+  reason?: string;
+  course?: any;
+  experiment?: any;
+  report_mode?: 'shared' | 'separate';
+}
+
 /**
- * 權限檢查擴充點 (Extension Point)
- * 權限模型：GitHub Identity -> D1 Membership -> config.yml consistency -> GitHub Repo Permission
+ * 伺服器端核心權限解析器 (Reusable Server-side Permission Resolver)
+ * 權限模型：GitHub Identity (github_id) -> D1 Membership (Course/Experiment) -> Guardrails
+ */
+export async function resolveExperimentPermission(
+  env: Env,
+  user: { github_id: string; username: string } | null,
+  context: {
+    repo_name?: string;
+    course_id?: string;
+    experiment_code?: string;
+  },
+  action?: string,
+  targetPath?: string | null,
+  filesChanged?: (string | null)[] | null
+): Promise<PermissionResult> {
+  // A. 身分驗證 (Authentication Check)
+  if (!user || !user.github_id) {
+    return { allowed: false, role: 'guest', reason: 'Unauthenticated: Valid session required' };
+  }
+
+  if (!env.DB) {
+    return { allowed: false, role: 'guest', reason: 'Database unavailable' };
+  }
+
+  // B. 查詢實驗與課程實體 (Experiment & Course Context)
+  let exp: any = null;
+  let course: any = null;
+
+  if (context.repo_name) {
+    const stmt = env.DB.prepare(
+      'SELECT id, course_id, experiment_code, name, repository, report_mode, config_version, status FROM experiments WHERE repository = ?'
+    ).bind(context.repo_name);
+    exp = await safeD1First(stmt);
+    if (exp && exp.repository !== context.repo_name) {
+      exp = null;
+    }
+  } else if (context.course_id && context.experiment_code) {
+    const stmt = env.DB.prepare(
+      'SELECT id, course_id, experiment_code, name, repository, report_mode, config_version, status FROM experiments WHERE course_id = ? AND experiment_code = ?'
+    ).bind(context.course_id, context.experiment_code);
+    exp = await safeD1First(stmt);
+  }
+
+  if (context.repo_name && !exp) {
+    return { allowed: false, role: 'guest', reason: 'Experiment repository not found in system' };
+  }
+
+  if (exp) {
+    const stmt = env.DB.prepare(
+      'SELECT id, course_code, name, semester, created_by_github_id FROM courses WHERE id = ?'
+    ).bind(exp.course_id);
+    course = await safeD1First(stmt);
+  } else if (context.course_id) {
+    const stmt = env.DB.prepare(
+      'SELECT id, course_code, name, semester, created_by_github_id FROM courses WHERE id = ?'
+    ).bind(context.course_id);
+    course = await safeD1First(stmt);
+  }
+
+  // C. 成員角色解析 (Hierarchical Membership Resolution)
+  let resolvedRole: 'teacher' | 'assistant' | 'student' | 'guest' = 'guest';
+
+  // 1. 若為具體實驗，先查 experiment_memberships
+  if (exp) {
+    const stmt = env.DB.prepare(
+      'SELECT role, status FROM experiment_memberships WHERE experiment_id = ? AND github_id = ? AND status = "active"'
+    ).bind(exp.id, user.github_id);
+    const expMember: any = await safeD1First(stmt);
+
+    if (expMember) {
+      resolvedRole = expMember.role as ('student' | 'assistant');
+    }
+  }
+
+  // 2. 查 course_memberships (教師或全課助教具備課程下所有實驗存取權)
+  const courseId = exp ? exp.course_id : context.course_id;
+  if (courseId) {
+    const stmt = env.DB.prepare(
+      'SELECT role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
+    ).bind(courseId, user.github_id);
+    const courseMember: any = await safeD1First(stmt);
+
+    if (courseMember) {
+      if (courseMember.role === 'teacher') {
+        resolvedRole = 'teacher';
+      } else if (courseMember.role === 'assistant' && resolvedRole !== 'teacher') {
+        resolvedRole = 'assistant';
+      } else if (courseMember.role === 'student' && resolvedRole === 'guest') {
+        // 重要業務規則：Course member 但尚未分組至該 Experiment，不得存取該 Experiment
+        return {
+          allowed: false,
+          role: 'guest',
+          reason: 'Access denied: Enrolled in course but not assigned to this experiment',
+          course,
+          experiment: exp,
+        };
+      }
+    }
+  }
+
+  // 3. 安全 Bootstrap Admin 檢查 (只有當系統內完全沒有任何 teacher 角色時，才允許 INITIAL_ADMIN_GITHUB_ID 提權)
+  if (resolvedRole === 'guest' && env.INITIAL_ADMIN_GITHUB_ID && user.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
+    const stmt = env.DB.prepare(
+      'SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher"'
+    );
+    const teacherCountRow: any = await safeD1First(stmt);
+    const teacherCount = teacherCountRow ? teacherCountRow.count : 0;
+    if (teacherCount === 0) {
+      resolvedRole = 'teacher';
+    }
+  }
+
+  // 若仍為 guest，無權限存取
+  if (resolvedRole === 'guest') {
+    return {
+      allowed: false,
+      role: 'guest',
+      reason: 'Forbidden: User is not an active member of this course or experiment',
+      course,
+      experiment: exp,
+    };
+  }
+
+  const reportMode: 'shared' | 'separate' = exp?.report_mode || 'shared';
+
+  // D. 業務行為與路徑合規檢查 (Guardrails)
+  if (action) {
+    const normTarget = normalizeRepoPath(targetPath);
+    const filesList = Array.isArray(filesChanged) ? filesChanged.filter(Boolean).map(f => normalizeRepoPath(f!)) : [];
+
+    // 鐵律 1: raw 聖域保護 (所有角色均嚴格禁止修改 raw/*)
+    const touchesRaw = isRawSanctuaryPath(normTarget) || filesList.some(isRawSanctuaryPath);
+    const isWriteAction = [
+      'file_created',
+      'file_modified',
+      'commit_created',
+      'push_completed',
+      'request_proposal',
+    ].includes(action);
+
+    if (touchesRaw && isWriteAction) {
+      return {
+        allowed: false,
+        role: resolvedRole,
+        reason: 'Raw sanctuary violation: Modifications to raw/* are strictly forbidden for all roles',
+        course,
+        experiment: exp,
+        report_mode: reportMode,
+      };
+    }
+
+    // 鐵律 2: separate 報告模式隔離
+    if (reportMode === 'separate') {
+      const isReportWrite = isWriteAction && (normTarget.startsWith('report/') || filesList.some(f => f.startsWith('report/')));
+
+      if (isReportWrite) {
+        // Assistant 角色在第一版為 review/read，嚴格禁止修改學生個人報告
+        if (resolvedRole === 'assistant') {
+          return {
+            allowed: false,
+            role: resolvedRole,
+            reason: 'Separate report violation: Assistant has read/review permissions only and cannot modify student separate reports',
+            course,
+            experiment: exp,
+            report_mode: reportMode,
+          };
+        }
+
+        // Student 角色嚴格只能修改自己的 report/report-<github_id>.md
+        if (resolvedRole === 'student') {
+          const myExpectedReport = `report/report-${user.github_id}.md`;
+
+          if (normTarget.startsWith('report/')) {
+            if (normTarget !== myExpectedReport) {
+              return {
+                allowed: false,
+                role: resolvedRole,
+                reason: `Separate report violation: Students can only modify their own report (${myExpectedReport}), attempted: ${normTarget}`,
+                course,
+                experiment: exp,
+                report_mode: reportMode,
+              };
+            }
+          }
+
+          for (const file of filesList) {
+            if (file.startsWith('report/') && file !== myExpectedReport) {
+              return {
+                allowed: false,
+                role: resolvedRole,
+                reason: `Separate report violation: Students cannot modify other reports (${file})`,
+                course,
+                experiment: exp,
+                report_mode: reportMode,
+              };
+            }
+          }
+        }
+        // Teacher (resolvedRole === 'teacher'): 具備管理全課程與實驗報告之權威，允許操作
+      }
+    }
+  }
+
+  return {
+    allowed: true,
+    role: resolvedRole,
+    course,
+    experiment: exp,
+    report_mode: reportMode,
+  };
+}
+
+/**
+ * 權限檢查擴充點相容封裝
  */
 export async function checkExperimentPermission(
   user: { username: string; github_id: string } | null,
   repo: string,
-  expId?: string
-): Promise<{ allowed: boolean; role: 'student' | 'teacher' | 'guest'; reason?: string }> {
+  expId?: string,
+  env?: any,
+  action?: string,
+  target?: string,
+  filesChanged?: string[]
+): Promise<{ allowed: boolean; role: 'student' | 'teacher' | 'assistant' | 'guest'; reason?: string }> {
   if (!user) {
     return { allowed: false, role: 'guest', reason: 'Unauthenticated' };
   }
-  // 本階段預留 Extension Point，預設允許通過身分驗證者操作
-  return { allowed: true, role: 'student' };
+  if (!env || !env.DB) {
+    return { allowed: true, role: 'student' };
+  }
+  const res = await resolveExperimentPermission(env, user, { repo_name: repo }, action, target, filesChanged);
+  return { allowed: res.allowed, role: res.role, reason: res.reason };
 }
 
 export const onRequest = async (context: any) => {
@@ -121,6 +401,37 @@ export const onRequest = async (context: any) => {
             JSON.stringify({ error: 'Missing required query parameter: repo' }),
             { status: 400, headers }
           );
+        }
+
+        // 檢查該 repo 是否為系統註冊之 Experiment (如果是，則必須授權存取)
+        if (env.DB) {
+          const stmt = env.DB.prepare('SELECT id, repository FROM experiments WHERE repository = ?').bind(repo);
+          const expRow: any = await safeD1First(stmt);
+          if (expRow && expRow.repository === repo) {
+            const authHeader = request.headers.get('Authorization') || '';
+            const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+            const expectedSecret =
+              env.ACTIVITY_LOG_SECRET ||
+              (typeof process !== 'undefined' && process.env ? process.env.ACTIVITY_LOG_SECRET : undefined);
+            const isBearer = !!(expectedSecret && token && token === expectedSecret);
+
+            if (!isBearer) {
+              const sessionUser = await getSessionUser(request, env);
+              if (!sessionUser) {
+                return new Response(
+                  JSON.stringify({ error: 'Repository not found or access denied' }),
+                  { status: 404, headers }
+                );
+              }
+              const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo });
+              if (!perm.allowed) {
+                return new Response(
+                  JSON.stringify({ error: 'Repository not found or access denied' }),
+                  { status: 404, headers }
+                );
+              }
+            }
+          }
         }
 
         const exp = url.searchParams.get('exp');
@@ -224,19 +535,73 @@ export const onRequest = async (context: any) => {
           });
         }
 
+        // 若為 Bearer Token 鑑權，依然執行 Raw 聖域防護檢驗
+        if (isBearerAuth) {
+          const normTarget = normalizeRepoPath(body.target);
+          const filesList = Array.isArray(body.files_changed) ? body.files_changed.map((f: any) => normalizeRepoPath(f)) : [];
+          const touchesRaw = isRawSanctuaryPath(normTarget) || filesList.some(isRawSanctuaryPath);
+          const isWriteAction = [
+            'file_created',
+            'file_modified',
+            'commit_created',
+            'push_completed',
+            'request_proposal',
+          ].includes(body.action);
+          if (touchesRaw && isWriteAction) {
+            return new Response(
+              JSON.stringify({ error: 'Raw sanctuary violation: Modifications to raw/* are strictly forbidden' }),
+              { status: 403, headers }
+            );
+          }
+        }
+
         // 若使用 Web Session 鑑權，強制以伺服器端 Session 身分鎖定操作者身分 (Anti-Spoofing)
-        // 注意：登入身分 (Authentication) 僅代表「誰登入發起請求」，不等於該操作「已獲得批准 (Approval)」。
-        // requested_by 反映發起者，而 approved_by 與 approval_status 仍維持既有 Activity Log v1.1/v1.2
-        // 的 approval input 語義（例如分步審批 file modification、commit、push），
-        // 登入本身不代表自動授予或取代任何審查批准權限。
+        // 且嚴格透過 resolveExperimentPermission 執行權限與審核校驗
         if (sessionUser) {
-          body.actor_type = 'web';
+          let permRole: string = 'student';
+
+          if (env.DB && body.repo_name) {
+            const stmt = env.DB.prepare('SELECT id, repository FROM experiments WHERE repository = ?').bind(body.repo_name);
+            const expCheck: any = await safeD1First(stmt);
+            if (expCheck && expCheck.repository === body.repo_name) {
+              const perm = await resolveExperimentPermission(
+                env,
+                sessionUser,
+                { repo_name: body.repo_name },
+                body.action,
+                body.target,
+                body.files_changed
+              );
+
+              if (!perm.allowed) {
+                return new Response(
+                  JSON.stringify({ error: `Forbidden: ${perm.reason}` }),
+                  { status: 403, headers }
+                );
+              }
+              permRole = perm.role;
+            }
+          }
+
+          body.actor_type = body.actor_type === 'agent' ? 'agent' : 'web';
           body.actor_id = sessionUser.username;
           body.actor_name = sessionUser.display_name || sessionUser.username;
           body.actor_avatar = sessionUser.avatar_url || null;
           body.requested_by = sessionUser.username;
-          // approved_by 保持由調用端傳入之既有宣告值或為 null，絕不因使用者登入就自動代表「已批准」
-          body.approved_by = body.approved_by ? String(body.approved_by).trim() : null;
+
+          // 審批分離原則 (Approval Non-Conflation):
+          // 只有 Teacher 角色可以在提交時標註核准 (approved_by)
+          // 學生發起之請求一律強制 approval_status = 'pending', approved_by = null
+          if (permRole === 'teacher' && body.approval_status === 'approved') {
+            body.approved_by = sessionUser.username;
+          } else {
+            body.approved_by = null;
+            if (body.approval_status === 'approved') {
+              body.approval_status = 'pending';
+            } else {
+              body.approval_status = body.approval_status || 'none';
+            }
+          }
         }
 
         // C. 驗證必要欄位
@@ -610,6 +975,171 @@ export const onRequest = async (context: any) => {
       );
 
       return new Response(JSON.stringify({ success: true }), { headers: responseHeaders });
+    }
+
+    // 4. 課程、實驗與成員權限 API (Course / Experiment / Membership)
+    if (path === 'courses') {
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ success: true, courses: [] }), { headers });
+      }
+
+      // 查詢使用者為 active 成員的所有課程
+      const res: any = await env.DB.prepare(
+        `SELECT c.id, c.course_code, c.name, c.semester, c.created_by_github_id, c.created_at, c.updated_at, cm.role
+         FROM courses c
+         JOIN course_memberships cm ON c.id = cm.course_id
+         WHERE cm.github_id = ? AND cm.status = 'active'
+         ORDER BY c.semester DESC, c.course_code ASC`
+      ).bind(sessionUser.github_id).all();
+
+      let coursesList = res.results || [];
+
+      // 若未加入任何課程，檢查是否為 Bootstrap 管理員 (系統尚無任何 teacher 時啟用)
+      if (coursesList.length === 0 && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
+        const tcRow: any = await env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher"').first();
+        if (tcRow && tcRow.count === 0) {
+          const allCourses: any = await env.DB.prepare('SELECT * FROM courses ORDER BY semester DESC, course_code ASC').all();
+          coursesList = (allCourses.results || []).map((c: any) => ({ ...c, role: 'teacher' }));
+        }
+      }
+
+      return new Response(JSON.stringify({ success: true, courses: coursesList }), { headers });
+    }
+
+    if (path === 'experiments') {
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ success: true, experiments: [] }), { headers });
+      }
+
+      const repo = url.searchParams.get('repo');
+      if (repo) {
+        const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo });
+        if (!perm.allowed || !perm.experiment) {
+          // 對未授權資源回傳 404，避免洩漏其他組別實驗的存在性
+          return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
+        }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            experiment: perm.experiment,
+            course: perm.course,
+            role: perm.role,
+            report_mode: perm.report_mode,
+          }),
+          { headers }
+        );
+      }
+
+      const courseId = url.searchParams.get('course_id');
+      if (!courseId) {
+        return new Response(JSON.stringify({ error: 'Missing required query parameter: course_id or repo' }), { status: 400, headers });
+      }
+
+      // 檢查使用者在該課程的角色
+      const courseMem: any = await env.DB.prepare(
+        'SELECT role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
+      ).bind(courseId, sessionUser.github_id).first();
+
+      let isTeacherOrTa = courseMem && (courseMem.role === 'teacher' || courseMem.role === 'assistant');
+
+      if (!isTeacherOrTa && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
+        const tcRow: any = await env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher"').first();
+        if (tcRow && tcRow.count === 0) {
+          isTeacherOrTa = true;
+        }
+      }
+
+      let expList: any[] = [];
+      if (isTeacherOrTa) {
+        const res: any = await env.DB.prepare(
+          'SELECT * FROM experiments WHERE course_id = ? ORDER BY experiment_code ASC'
+        ).bind(courseId).all();
+        expList = res.results || [];
+      } else if (courseMem && courseMem.role === 'student') {
+        // 學生僅能看到自己有被分配組別 (experiment_memberships) 的實驗
+        const res: any = await env.DB.prepare(
+          `SELECT e.*, em.group_name
+           FROM experiments e
+           JOIN experiment_memberships em ON e.id = em.experiment_id
+           WHERE e.course_id = ? AND em.github_id = ? AND em.status = 'active'
+           ORDER BY e.experiment_code ASC`
+        ).bind(courseId, sessionUser.github_id).all();
+        expList = res.results || [];
+      } else {
+        return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
+      }
+
+      return new Response(JSON.stringify({ success: true, experiments: expList }), { headers });
+    }
+
+    if (path === 'members') {
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ success: true, members: [] }), { headers });
+      }
+
+      const courseId = url.searchParams.get('course_id');
+      const experimentId = url.searchParams.get('experiment_id');
+      const repo = url.searchParams.get('repo');
+
+      if (repo) {
+        const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo });
+        if (!perm.allowed || !perm.experiment) {
+          return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
+        }
+        const res: any = await env.DB.prepare(
+          'SELECT id, experiment_id, github_id, username, role, group_name, status FROM experiment_memberships WHERE experiment_id = ? AND status = "active"'
+        ).bind(perm.experiment.id).all();
+        return new Response(JSON.stringify({ success: true, experiment_members: res.results || [] }), { headers });
+      }
+
+      if (courseId) {
+        const courseMem: any = await env.DB.prepare(
+          'SELECT role FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
+        ).bind(courseId, sessionUser.github_id).first();
+
+        let canViewCourse = !!courseMem;
+        if (!canViewCourse && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
+          const tcRow: any = await env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher"').first();
+          if (tcRow && tcRow.count === 0) canViewCourse = true;
+        }
+
+        if (!canViewCourse) {
+          return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
+        }
+        const res: any = await env.DB.prepare(
+          'SELECT id, course_id, github_id, username, role, status FROM course_memberships WHERE course_id = ? AND status = "active"'
+        ).bind(courseId).all();
+        return new Response(JSON.stringify({ success: true, course_members: res.results || [] }), { headers });
+      }
+
+      if (experimentId) {
+        const expRow: any = await env.DB.prepare('SELECT id, course_id, repository FROM experiments WHERE id = ?').bind(experimentId).first();
+        if (!expRow) {
+          return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+        }
+        const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: expRow.repository });
+        if (!perm.allowed) {
+          return new Response(JSON.stringify({ error: 'Access denied' }), { status: 404, headers });
+        }
+        const res: any = await env.DB.prepare(
+          'SELECT id, experiment_id, github_id, username, role, group_name, status FROM experiment_memberships WHERE experiment_id = ? AND status = "active"'
+        ).bind(experimentId).all();
+        return new Response(JSON.stringify({ success: true, experiment_members: res.results || [] }), { headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Missing required query parameter: course_id, experiment_id, or repo' }), { status: 400, headers });
     }
 
     return new Response(JSON.stringify({ error: 'Endpoint not found', path }), { status: 404, headers });
