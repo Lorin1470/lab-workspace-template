@@ -741,27 +741,16 @@ async function runFrontendIntegrationTests() {
     assert.strictEqual(membersList[0].role, 'teacher');
     pass('課程建立時已自動批次綁定首位 Teacher 成員');
 
-    // 2.2 Last Active Teacher 降級保護
+    // 2.2 移除階級保護：更新成員資訊成功 (200 OK，無 Last Teacher Protection 阻擋)
     const res2 = await apiRequest(`/courses/${courseId}/members/${teacherMemberId}`, {
       method: 'PATCH',
       cookie: teacherCookie,
-      body: { role: 'student' },
+      body: { username: 'teacherChen_updated' },
     });
-    assert.strictEqual(res2.status, 400);
-    assert(res2.data.error.includes('Cannot demote'));
-    pass('最後一位活躍教師嘗試降級遭 400 阻擋 (Last Teacher Protection)');
+    assert.strictEqual(res2.status, 200);
+    pass('移除階級保護：成員資訊自由更新成功 (200 OK)');
 
-    // 2.3 Last Active Teacher 停用保護
-    const res3 = await apiRequest(`/courses/${courseId}/members/${teacherMemberId}`, {
-      method: 'PATCH',
-      cookie: teacherCookie,
-      body: { status: 'inactive' },
-    });
-    assert.strictEqual(res3.status, 400);
-    assert(res3.data.error.includes('Cannot deactivate'));
-    pass('最後一位活躍教師嘗試停用遭 400 阻擋 (Last Teacher Protection)');
-
-    // 2.4 教師新增學生至課程
+    // 2.4 協作者新增學生至課程
     const res4 = await apiRequest(`/courses/${courseId}/members`, {
       method: 'POST',
       cookie: teacherCookie,
@@ -770,16 +759,16 @@ async function runFrontendIntegrationTests() {
     assert.strictEqual(res4.status, 201);
     studentMemberId = res4.data.member.id;
     assert.strictEqual(res4.data.member.username, 'studentChen');
-    pass('教師成功將學生加入課程 (201 Created)');
+    pass('協作者成功將同學加入課程 (201 Created)');
 
-    // 2.5 學生嘗試調用成員管理修改角色 (403 越權攔截)
+    // 2.5 非課程成員嘗試調用成員管理修改角色 (403 越權攔截)
     const res5 = await apiRequest(`/courses/${courseId}/members/${studentMemberId}`, {
       method: 'PATCH',
-      cookie: studentCookie,
-      body: { role: 'teacher' },
+      cookie: otherStudentCookie,
+      body: { username: 'hacked' },
     });
     assert.strictEqual(res5.status, 403);
-    pass('學生嘗試提升自身為教師遭 403 Forbidden 阻絕');
+    pass('非課程成員嘗試修改成員遭 403 Forbidden 阻絕');
   } catch (err) {
     fail('群組 2 執行失敗', err);
   }
@@ -956,9 +945,9 @@ async function runFrontendIntegrationTests() {
   }
 
   // -------------------------------------------------------------
-  // 群組 6: 課程狀態流轉與學生可見性 (archived / inactive)
+  // 群組 6: 課程狀態流轉與協作者可見性 (archived / inactive)
   // -------------------------------------------------------------
-  console.log('\n▶ [群組 6: 課程狀態流轉與學生可見性 (archived / inactive)]');
+  console.log('\n▶ [群組 6: 課程狀態流轉與協作者可見性 (archived / inactive)]');
   try {
     // 6.1 將課程設定為 inactive
     await apiRequest(`/courses/${courseId}`, {
@@ -967,25 +956,18 @@ async function runFrontendIntegrationTests() {
       body: { status: 'inactive' },
     });
 
-    // 6.2 學生查詢課程列表 (inactive 自動對學生隱藏)
-    const res1 = await apiRequest('/courses', { cookie: studentCookie });
+    // 6.2 協作者查詢課程詳情 (inactive 課程對協作者可見以便維護與重新啟用)
+    const res1 = await apiRequest(`/courses/${courseId}`, { cookie: studentCookie });
     assert.strictEqual(res1.status, 200);
-    const hasInactive = res1.data.courses.some((c) => c.id === courseId);
-    assert.strictEqual(hasInactive, false);
-    pass('Inactive 課程對學生完全隱藏，不出現於課程列表');
+    assert.strictEqual(res1.data.course.status, 'inactive');
+    pass('協作者可查詢所屬 Inactive 課程詳情以便維護 (200 OK)');
 
-    // 6.3 學生直接訪問 inactive 課程詳情 (404 存在性遮蔽)
-    const res2 = await apiRequest(`/courses/${courseId}`, { cookie: studentCookie });
+    // 6.3 非課程成員直接訪問 inactive 課程詳情 (404 存在性遮蔽)
+    const res2 = await apiRequest(`/courses/${courseId}`, { cookie: otherStudentCookie });
     assert.strictEqual(res2.status, 404);
-    pass('學生直接存取 Inactive 課程回傳 404 遮蔽存在性');
+    pass('非課程成員存取 Inactive 課程回傳 404 遮蔽存在性');
 
-    // 6.4 教師仍可存取 Inactive 課程
-    const res3 = await apiRequest(`/courses/${courseId}`, { cookie: teacherCookie });
-    assert.strictEqual(res3.status, 200);
-    assert.strictEqual(res3.data.course.status, 'inactive');
-    pass('教師仍可維護檢視 Inactive 課程');
-
-    // 6.5 恢復為 active
+    // 6.4 恢復為 active
     await apiRequest(`/courses/${courseId}`, {
       method: 'PATCH',
       cookie: teacherCookie,
@@ -1007,32 +989,13 @@ async function runFrontendIntegrationTests() {
     assert.strictEqual(expCheckRes.data.experiment.provisioning_status, 'pending');
     pass('實驗專案建立後初始狀態為待建立 (pending)');
 
-    // 8.2 學生嘗試呼叫 POST /api/experiments/:id/provision 遭 403 阻絕 (安全邊界在後端)
-    const studProvRes = await apiRequest(`/experiments/${expId}/provision`, {
+    // 8.2 非課程成員嘗試呼叫 POST /api/experiments/:id/provision 遭 403 阻絕 (安全邊界在後端)
+    const outsiderProvRes = await apiRequest(`/experiments/${expId}/provision`, {
       method: 'POST',
-      cookie: studentCookie,
+      cookie: otherStudentCookie,
     });
-    assert.strictEqual(studProvRes.status, 403);
-    pass('學生嘗試觸發儲存庫建立遭 403 Forbidden 阻絕');
-
-    // 8.3 助教嘗試呼叫 POST /api/experiments/:id/provision 遭 403 阻絕
-    const taCookie = createTestSession('88888', 'taChen');
-    mockD1.courseMemberships.set('cm-ta', {
-      id: 'cm-ta',
-      course_id: courseId,
-      github_id: '88888',
-      username: 'taChen',
-      role: 'assistant',
-      status: 'active',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-    const taProvRes = await apiRequest(`/experiments/${expId}/provision`, {
-      method: 'POST',
-      cookie: taCookie,
-    });
-    assert.strictEqual(taProvRes.status, 403);
-    pass('助教嘗試觸發儲存庫建立遭 403 Forbidden 阻絕');
+    assert.strictEqual(outsiderProvRes.status, 403);
+    pass('非課程成員嘗試觸發儲存庫建立遭 403 Forbidden 阻絕');
 
     // 8.4 未登入呼叫 POST /api/experiments/:id/provision 遭 401 阻絕
     const unauthProvRes = await apiRequest(`/experiments/${expId}/provision`, {

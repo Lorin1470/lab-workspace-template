@@ -96,37 +96,24 @@ async function getSessionUser(request: Request, env: Env): Promise<{
   return row;
 }
 
-// 檢查使用者是否為該課程之合法 active Teacher
-export async function isCourseTeacher(env: Env, courseId: string, githubId: string): Promise<boolean> {
+// 檢查使用者是否為該課程之合法 active 成員 (Collaborator)
+export async function isCourseMember(env: Env, courseId: string, githubId: string): Promise<boolean> {
   if (!env.DB || !courseId || !githubId) return false;
   const stmt = env.DB.prepare(
     'SELECT id, role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
   ).bind(courseId, githubId);
   const mem: any = await safeD1First(stmt);
-  if (mem && mem.role === 'teacher') return true;
-
-  // Bootstrap Admin fallback (僅限全系統 0 active Teacher 時)
-  if (env.INITIAL_ADMIN_GITHUB_ID && githubId === env.INITIAL_ADMIN_GITHUB_ID) {
-    const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
-    if (tcRow && tcRow.count === 0) return true;
-  }
-  return false;
+  return !!mem;
 }
 
-// 檢查使用者是否具備建立新課程權限 (既有 Teacher 或全系統 0 active Teacher 時之 Bootstrap Admin)
-export async function canUserCreateCourse(env: Env, githubId: string): Promise<boolean> {
-  if (!env.DB || !githubId) return false;
-  const stmt = env.DB.prepare(
-    'SELECT id FROM course_memberships WHERE github_id = ? AND role = "teacher" AND status = "active" LIMIT 1'
-  ).bind(githubId);
-  const existingTeacher: any = await safeD1First(stmt);
-  if (existingTeacher) return true;
+// 相容別名：平權化架構下，所有 active 成員皆具備協作管理能力
+export async function isCourseTeacher(env: Env, courseId: string, githubId: string): Promise<boolean> {
+  return isCourseMember(env, courseId, githubId);
+}
 
-  if (env.INITIAL_ADMIN_GITHUB_ID && githubId === env.INITIAL_ADMIN_GITHUB_ID) {
-    const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
-    if (tcRow && tcRow.count === 0) return true;
-  }
-  return false;
+// 檢查使用者是否具備建立新課程權限 (任何已登入使用者皆可建立工作區)
+export async function canUserCreateCourse(env: Env, githubId: string): Promise<boolean> {
+  return !!githubId;
 }
 
 // 1. 安全路徑正規化 (Repository-relative path normalization)
@@ -268,18 +255,6 @@ export async function resolveExperimentPermission(
     }
   }
 
-  // 3. 安全 Bootstrap Admin 檢查 (只有當系統內完全沒有任何 active teacher 角色時，才允許 INITIAL_ADMIN_GITHUB_ID 提權)
-  if (resolvedRole === 'guest' && env.INITIAL_ADMIN_GITHUB_ID && user.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
-    const stmt = env.DB.prepare(
-      'SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'
-    );
-    const teacherCountRow: any = await safeD1First(stmt);
-    const teacherCount = teacherCountRow ? teacherCountRow.count : 0;
-    if (teacherCount === 0) {
-      resolvedRole = 'teacher';
-    }
-  }
-
   // 若仍為 guest，無權限存取
   if (resolvedRole === 'guest') {
     return {
@@ -297,38 +272,12 @@ export async function resolveExperimentPermission(
     ? ['file_created', 'file_modified', 'commit_created', 'push_completed', 'request_proposal'].includes(action)
     : false;
 
-  // 檢查 Course 狀態 (active / archived / inactive)
-  if (course && course.status && course.status !== 'active') {
-    if (resolvedRole === 'student') {
-      if (course.status === 'inactive') {
-        return {
-          allowed: false,
-          role: 'guest',
-          reason: 'Course is inactive: Access denied for students',
-          course,
-          experiment: exp,
-          report_mode: reportMode,
-        };
-      }
-      if (isWriteAction) {
-        return {
-          allowed: false,
-          role: resolvedRole,
-          reason: 'Course is archived: Student write operations are prohibited',
-          course,
-          experiment: exp,
-          report_mode: reportMode,
-        };
-      }
-    }
-  }
-
   // D. 業務行為與路徑合規檢查 (Guardrails)
   if (action) {
     const normTarget = normalizeRepoPath(targetPath);
     const filesList = Array.isArray(filesChanged) ? filesChanged.filter(Boolean).map(f => normalizeRepoPath(f!)) : [];
 
-    // 鐵律 1: raw 聖域保護 (所有角色均嚴格禁止修改 raw/*)
+    // 鐵律 1: raw 聖域保護 (所有協作者均嚴格禁止修改 raw/*)
     const touchesRaw = isRawSanctuaryPath(normTarget) || filesList.some(isRawSanctuaryPath);
 
     if (touchesRaw && isWriteAction) {
@@ -342,54 +291,38 @@ export async function resolveExperimentPermission(
       };
     }
 
-    // 鐵律 2: separate 報告模式隔離
-    if (reportMode === 'separate') {
-      const isReportWrite = isWriteAction && (normTarget.startsWith('report/') || filesList.some(f => f.startsWith('report/')));
+    // 鐵律 2: separate 報告模式隔離 (所有協作者均嚴格只能修改自己的報告)
+    if (reportMode === 'separate' && isWriteAction) {
+      const isReportWrite = normTarget.startsWith('report/') || filesList.some(f => f.startsWith('report/'));
 
       if (isReportWrite) {
-        // Assistant 角色在第一版為 review/read，嚴格禁止修改學生個人報告
-        if (resolvedRole === 'assistant') {
-          return {
-            allowed: false,
-            role: resolvedRole,
-            reason: 'Separate report violation: Assistant has read/review permissions only and cannot modify student separate reports',
-            course,
-            experiment: exp,
-            report_mode: reportMode,
-          };
-        }
+        const myExpectedReport = `report/report-${user.github_id}.md`;
 
-        // Student 角色嚴格只能修改自己的 report/report-<github_id>.md
-        if (resolvedRole === 'student') {
-          const myExpectedReport = `report/report-${user.github_id}.md`;
-
-          if (normTarget.startsWith('report/')) {
-            if (normTarget !== myExpectedReport) {
-              return {
-                allowed: false,
-                role: resolvedRole,
-                reason: `Separate report violation: Students can only modify their own report (${myExpectedReport}), attempted: ${normTarget}`,
-                course,
-                experiment: exp,
-                report_mode: reportMode,
-              };
-            }
-          }
-
-          for (const file of filesList) {
-            if (file.startsWith('report/') && file !== myExpectedReport) {
-              return {
-                allowed: false,
-                role: resolvedRole,
-                reason: `Separate report violation: Students cannot modify other reports (${file})`,
-                course,
-                experiment: exp,
-                report_mode: reportMode,
-              };
-            }
+        if (normTarget.startsWith('report/')) {
+          if (normTarget !== myExpectedReport) {
+            return {
+              allowed: false,
+              role: resolvedRole,
+              reason: `Separate report violation: Collaborators can only modify their own report (${myExpectedReport}), attempted: ${normTarget}`,
+              course,
+              experiment: exp,
+              report_mode: reportMode,
+            };
           }
         }
-        // Teacher (resolvedRole === 'teacher'): 具備管理全課程與實驗報告之權威，允許操作
+
+        for (const file of filesList) {
+          if (file.startsWith('report/') && file !== myExpectedReport) {
+            return {
+              allowed: false,
+              role: resolvedRole,
+              reason: `Separate report violation: Collaborators cannot modify other reports (${file})`,
+              course,
+              experiment: exp,
+              report_mode: reportMode,
+            };
+          }
+        }
       }
     }
   }
@@ -656,18 +589,14 @@ export const onRequest = async (context: any) => {
           body.actor_avatar = sessionUser.avatar_url || null;
           body.requested_by = sessionUser.username;
 
-          // 審批分離原則 (Approval Non-Conflation):
-          // 只有 Teacher 角色可以在提交時標註核准 (approved_by)
-          // 學生發起之請求一律強制 approval_status = 'pending', approved_by = null
-          if (permRole === 'teacher' && body.approval_status === 'approved') {
-            body.approved_by = sessionUser.username;
+          // 平等協作原則：任何協作者皆可依據確認狀態提交核准
+          if (body.approval_status === 'approved') {
+            body.approved_by = body.approved_by || sessionUser.username;
+          } else if (body.approval_status === 'rejected') {
+            body.approved_by = body.approved_by || sessionUser.username;
           } else {
             body.approved_by = null;
-            if (body.approval_status === 'approved') {
-              body.approval_status = 'pending';
-            } else {
-              body.approval_status = body.approval_status || 'none';
-            }
+            body.approval_status = body.approval_status || 'none';
           }
         }
 
@@ -1057,35 +986,20 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'GET') {
-        // 查詢使用者為 active 成員的所有課程 (包含 status，學生過濾 inactive)
+        // 查詢使用者為 active 成員的所有課程工作區
         const res: any = await env.DB.prepare(
           `SELECT c.id, c.course_code, c.name, c.semester, c.status, c.created_by_github_id, c.created_at, c.updated_at, cm.role
            FROM courses c
            JOIN course_memberships cm ON c.id = cm.course_id
            WHERE cm.github_id = ? AND cm.status = 'active'
-             AND (cm.role IN ('teacher', 'assistant') OR c.status != 'inactive')
            ORDER BY c.semester DESC, c.course_code ASC`
         ).bind(sessionUser.github_id).all();
 
-        let coursesList = res.results || [];
-
-        // 若未加入任何課程，檢查是否為 Bootstrap 管理員 (系統尚無任何 active teacher 時啟用)
-        if (coursesList.length === 0 && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
-          const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
-          if (tcRow && tcRow.count === 0) {
-            const allCourses: any = await env.DB.prepare('SELECT * FROM courses ORDER BY semester DESC, course_code ASC').all();
-            coursesList = (allCourses.results || []).map((c: any) => ({ ...c, role: 'teacher' }));
-          }
-        }
-
+        const coursesList = res.results || [];
         return new Response(JSON.stringify({ success: true, courses: coursesList }), { headers });
       }
 
       if (request.method === 'POST') {
-        const canCreate = await canUserCreateCourse(env, sessionUser.github_id);
-        if (!canCreate) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only teachers can create courses' }), { status: 403, headers });
-        }
 
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== 'object') {
@@ -1166,18 +1080,14 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
 
-      // 檢查使用者在該課程的角色
+      // 檢查使用者在該課程之成員資格
       const courseMem: any = await safeD1First(
         env.DB.prepare('SELECT role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"').bind(courseId, sessionUser.github_id)
       );
-      let userRole = courseMem ? courseMem.role : null;
-      if (!userRole && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
-        const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
-        if (tcRow && tcRow.count === 0) userRole = 'teacher';
-      }
+      const userRole = courseMem ? courseMem.role : null;
 
-      if (!userRole || (course.status === 'inactive' && userRole === 'student')) {
-        // 存在性遮蔽：非成員或已停用課程對學生無法窺探
+      if (!userRole) {
+        // 存在性遮蔽：非成員無法窺探
         return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
       }
 
@@ -1186,9 +1096,6 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'PATCH') {
-        if (userRole !== 'teacher') {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can update course details' }), { status: 403, headers });
-        }
 
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== 'object') {
@@ -1269,13 +1176,10 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
 
-      const isTeacher = await isCourseTeacher(env, courseId, sessionUser.github_id);
+      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
 
       if (request.method === 'GET') {
-        const myMem: any = await safeD1First(
-          env.DB.prepare('SELECT role FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"').bind(courseId, sessionUser.github_id)
-        );
-        if ((!myMem && !isTeacher) || (course.status === 'inactive' && !isTeacher)) {
+        if (!isMember) {
           return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
         }
 
@@ -1287,8 +1191,8 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
-        if (!isTeacher) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can manage course members' }), { status: 403, headers });
+        if (!isMember) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage course members' }), { status: 403, headers });
         }
 
         if (course.status !== 'active') {
@@ -1362,9 +1266,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
 
-      const isTeacher = await isCourseTeacher(env, courseId, sessionUser.github_id);
-      if (!isTeacher) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can manage course members' }), { status: 403, headers });
+      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage course members' }), { status: 403, headers });
       }
 
       // IDOR 防護 2: 嚴格比對 memberId 與 courseId，找不到或不匹配一律 404 (防止洩漏其他課程成員存在性)
@@ -1383,21 +1287,6 @@ export const onRequest = async (context: any) => {
 
         const updates: string[] = [];
         const binds: any[] = [];
-
-        // Last Teacher Protection: 不可降級或停用最後一位 Active Teacher
-        if (targetMem.role === 'teacher' && targetMem.status === 'active') {
-          const isDemoting = body.role !== undefined && body.role !== 'teacher';
-          const isDeactivating = body.status !== undefined && body.status !== 'active';
-          if (isDemoting || isDeactivating) {
-            const tcRow: any = await safeD1First(
-              env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE course_id = ? AND role = "teacher" AND status = "active"').bind(courseId)
-            );
-            if (tcRow && tcRow.count <= 1) {
-              const actionName = isDemoting ? 'demote' : 'deactivate';
-              return new Response(JSON.stringify({ error: `Cannot ${actionName} the only active teacher in this course` }), { status: 400, headers });
-            }
-          }
-        }
 
         if (body.role !== undefined) {
           if (!['teacher', 'assistant', 'student'].includes(body.role)) {
@@ -1479,10 +1368,10 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ error: `Cannot create experiment in a ${course.status} course` }), { status: 400, headers });
         }
 
-        // 檢查建立者是否為該課程 Teacher
-        const isTeacher = await isCourseTeacher(env, course_id, sessionUser.github_id);
-        if (!isTeacher) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can create experiments' }), { status: 403, headers });
+        // 檢查建立者是否為該課程成員 (Collaborator)
+        const isMember = await isCourseMember(env, course_id, sessionUser.github_id);
+        if (!isMember) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course members can create experiments' }), { status: 403, headers });
         }
 
         // 檢查 repository 格式
@@ -1515,6 +1404,13 @@ export const onRequest = async (context: any) => {
               id, course_id, experiment_code, name, repository, report_mode, config_version, status, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).bind(expId, course_id, experiment_code, name, repository, report_mode, '1.0', 'not_started', now, now).run();
+
+          // 協作者自動加入實驗成員
+          const emId = `em_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+          await env.DB.prepare(
+            `INSERT INTO experiment_memberships (id, experiment_id, github_id, username, role, group_name, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'student', null, 'active', ?, ?)`
+          ).bind(emId, expId, sessionUser.github_id, sessionUser.username, now, now).run().catch(() => {});
         } catch (dbErr: any) {
           const errMsg = String(dbErr?.message || dbErr);
           if (errMsg.includes('UNIQUE constraint failed')) {
@@ -1555,14 +1451,7 @@ export const onRequest = async (context: any) => {
           env.DB.prepare('SELECT role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"').bind(courseId, sessionUser.github_id)
         );
 
-        let isTeacherOrTa = courseMem && (courseMem.role === 'teacher' || courseMem.role === 'assistant');
-
-        if (!isTeacherOrTa && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
-          const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
-          if (tcRow && tcRow.count === 0) {
-            isTeacherOrTa = true;
-          }
-        }
+        const isTeacherOrTa = courseMem && (courseMem.role === 'teacher' || courseMem.role === 'assistant');
 
         // 檢查課程存在性與狀態 (inactive 課程對學生隱藏 404)
         const course: any = await safeD1First(env.DB.prepare('SELECT id, status FROM courses WHERE id = ?').bind(courseId));
@@ -1628,10 +1517,6 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'PATCH') {
-        if (perm.role !== 'teacher') {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only teachers can update experiment' }), { status: 403, headers });
-        }
-
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== 'object') {
           return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
@@ -1711,9 +1596,9 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
-        const isTeacher = await isCourseTeacher(env, exp.course_id, sessionUser.github_id);
-        if (!isTeacher) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can assign members to experiments' }), { status: 403, headers });
+        const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
+        if (!isMember) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course members can assign members to experiments' }), { status: 403, headers });
         }
 
         const expCourse: any = await safeD1First(env.DB.prepare('SELECT status FROM courses WHERE id = ?').bind(exp.course_id));
@@ -1796,9 +1681,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const isTeacher = await isCourseTeacher(env, exp.course_id, sessionUser.github_id);
-      if (!isTeacher) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can manage experiment members' }), { status: 403, headers });
+      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage experiment members' }), { status: 403, headers });
       }
 
       // IDOR 防護：嚴格限定 memberId 與 expId 匹配，不匹配或不存在一律 404
@@ -1902,10 +1787,10 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
-        // 檢查操作者是否為該課程 Teacher
-        const isTeacher = await isCourseTeacher(env, exp.course_id, sessionUser.github_id);
-        if (!isTeacher) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can provision repositories' }), { status: 403, headers });
+        // 檢查操作者是否為該課程成員 (Collaborator)
+        const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
+        if (!isMember) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course members can provision repositories' }), { status: 403, headers });
         }
 
         // 檢查課程狀態是否為 active
@@ -2112,11 +1997,7 @@ export const onRequest = async (context: any) => {
           'SELECT role FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
         ).bind(courseId, sessionUser.github_id));
 
-        let canViewCourse = !!courseMem;
-        if (!canViewCourse && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
-          const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
-          if (tcRow && tcRow.count === 0) canViewCourse = true;
-        }
+        const canViewCourse = !!courseMem;
 
         if (!canViewCourse) {
           return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });

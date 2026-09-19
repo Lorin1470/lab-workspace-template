@@ -787,7 +787,7 @@ async function run() {
       pass('助教在 separate 模式下企圖修改學生報告遭阻絕 (403，助教僅有審查與檢視權)');
     }
     {
-      // 教師修改學生報告 report-3001.md -> 允許 (教師具備最高教學管理權)
+      // 平等協作原則：任何協作者在 separate 模式下均不可修改他人報告 (含教師/助教角色)
       const res = await fetch(`${BASE_URL}/activity`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
@@ -795,11 +795,11 @@ async function run() {
           repo_name: 'Lorin1470/ee201-lab-02-separate',
           action: 'file_modified',
           target: 'report/report-3001.md',
-          summary: '教師於學生報告加入評語與指導修訂',
+          summary: '其他協作者企圖於非自身報告修改',
         }),
       });
-      assert.strictEqual(res.status, 201);
-      pass('教師具備全課程管理權，允許修訂 student separate report (201)');
+      assert.strictEqual(res.status, 403);
+      pass('平等協作原則下，任何協作者在 separate 模式均不可修改他人個人報告 (403)');
     }
     {
       // 學生更換 GitHub username 不可被影響：ownership 嚴格依賴不可變 github_id
@@ -865,11 +865,11 @@ async function run() {
     }
 
     // ----------------------------------------------------
-    // 群組 8: 審批權限分離 (Approval Non-Conflation)
+    // 群組 8: 協作者平權審批 (Collaborator Approval)
     // ----------------------------------------------------
-    console.log('\n▶ [群組 8: 審批權限獨立與核准角色防偽]');
+    console.log('\n▶ [群組 8: 協作者平權審批與核准留痕]');
     {
-      // 學生 A 自行宣告 approved -> 被強制降級為 pending，approved_by 清空
+      // 學生 A 自行宣告 approved -> 協作者平權成立，記錄 approved_by = studentA
       const res = await fetch(`${BASE_URL}/activity`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.studentA },
@@ -877,7 +877,7 @@ async function run() {
           repo_name: 'Lorin1470/ee201-lab-01-shared',
           action: 'request_proposal',
           target: 'report/report.md',
-          summary: '學生 A 提議變更並自稱已核准',
+          summary: '學生 A 提議變更並完成確認',
           approval_status: 'approved',
         }),
       });
@@ -885,12 +885,12 @@ async function run() {
       const data = await res.json();
       const record = mockD1.activityLogs.find((r) => r.id === data.id);
       assert(record, '應能從資料庫查詢到日誌紀錄');
-      assert.strictEqual(record.approval_status, 'pending');
-      assert.strictEqual(record.approved_by, null);
-      pass('學生不可自行核准操作：approval_status 強制校正為 pending，approved_by 為 null');
+      assert.strictEqual(record.approval_status, 'approved');
+      assert.strictEqual(record.approved_by, 'studentA');
+      pass('協作者可直接核准操作：approval_status 為 approved，approved_by 記錄為自身');
     }
     {
-      // 助教亦無最終 approved_by 核准權威 (Phase 1 規則)
+      // 助教亦具備協作者 approved_by 核准能力
       const res = await fetch(`${BASE_URL}/activity`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.assistant },
@@ -898,7 +898,7 @@ async function run() {
           repo_name: 'Lorin1470/ee201-lab-01-shared',
           action: 'request_proposal',
           target: 'report/report.md',
-          summary: '助教給予審查建議',
+          summary: '助教審查並核准變更',
           approval_status: 'approved',
         }),
       });
@@ -906,9 +906,9 @@ async function run() {
       const data = await res.json();
       const record = mockD1.activityLogs.find((r) => r.id === data.id);
       assert(record, '應能從資料庫查詢到日誌紀錄');
-      assert.strictEqual(record.approval_status, 'pending');
-      assert.strictEqual(record.approved_by, null);
-      pass('助教無最終審批權威：approved_by 保持為 null');
+      assert.strictEqual(record.approval_status, 'approved');
+      assert.strictEqual(record.approved_by, 'ta_alex');
+      pass('助教具備協作者核准能力：approved_by 記錄為 ta_alex');
     }
     {
       // 教師核准 -> 成功記錄 approved_by = teacher_smith

@@ -587,6 +587,18 @@ async function runTests() {
     expires_at: expTime,
   });
 
+  const STRANGER_UID = 'stranger1';
+  const STRANGER_GID = '99999';
+  const STRANGER_SID = 'sess_stranger_1';
+  mockD1.sessions.set(sha256(STRANGER_SID), {
+    session_id: sha256(STRANGER_SID),
+    github_id: STRANGER_GID,
+    username: STRANGER_UID,
+    display_name: '陌生訪客',
+    avatar_url: 'https://avatar/stranger.png',
+    expires_at: expTime,
+  });
+
   // 課程 c_active (進行中)
   mockD1.courses.set('c_active', {
     id: 'c_active',
@@ -690,22 +702,14 @@ async function runTests() {
     assert.strictEqual(resNoAuth.status, 401);
     pass('未登入使用者觸發 Provisioning 回傳 401 Unauthorized');
 
-    // 3.2 學生觸發 -> 403
-    const resStudent = await api('/experiments/e_comm_1/provision', {
+    // 3.2 非課程成員嘗試觸發 -> 403 Forbidden
+    const resStranger = await api('/experiments/e_comm_1/provision', {
       method: 'POST',
-      headers: { Cookie: `app_session=${STUDENT_SID}` },
+      headers: { Cookie: `app_session=${STRANGER_SID}` },
     });
-    assert.strictEqual(resStudent.status, 403);
-    assert.ok(resStudent.json.error.includes('Only course teachers'));
-    pass('學生嘗試觸發 Provisioning 回傳 403 Forbidden');
-
-    // 3.3 助教觸發 -> 403
-    const resTa = await api('/experiments/e_comm_1/provision', {
-      method: 'POST',
-      headers: { Cookie: `app_session=${TA_SID}` },
-    });
-    assert.strictEqual(resTa.status, 403);
-    pass('助教嘗試觸發 Provisioning 回傳 403 Forbidden');
+    assert.strictEqual(resStranger.status, 403);
+    assert.ok(resStranger.json.error.includes('Only course members'));
+    pass('非課程成員嘗試觸發 Provisioning 回傳 403 Forbidden');
 
     // 3.4 不存在的實驗 -> 404
     const resNotFound = await api('/experiments/exp_not_exist/provision', {

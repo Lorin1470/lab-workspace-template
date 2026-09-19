@@ -557,20 +557,20 @@ async function run() {
     let expMemberId = '';
 
     // ----------------------------------------------------
-    // 群組 1: Bootstrap Admin 初始建置與自動失效
+    // 群組 1: 課程工作區自主建立 (所有認證使用者皆可建立)
     // ----------------------------------------------------
-    console.log('▶ [群組 1: Bootstrap Admin 初始提權建置與自動退場]');
+    console.log('▶ [群組 1: 課程工作區自主建立 (所有認證使用者皆可建立)]');
     {
-      // 1.1 目前全系統 0 Teacher，陌生人不可建立課程
-      const resStranger = await fetch(`${BASE_URL}/courses`, {
+      // 1.1 未登入訪客建立課程遭拒絕 (401)
+      const resNoAuth = await fetch(`${BASE_URL}/courses`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.stranger },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ course_code: 'EE101', name: '電路學', semester: '114-1' }),
       });
-      assert.strictEqual(resStranger.status, 403);
-      pass('全系統無 Teacher 時，一般陌生訪客建立課程遭拒絕 (403)');
+      assert.strictEqual(resNoAuth.status, 401);
+      pass('未登入訪客建立課程遭拒絕 (401 Unauthorized)');
 
-      // 1.2 Bootstrap Admin 建立系統第一門課程 (EE201)
+      // 1.2 任何認證使用者皆可建立首門課程 (EE201)
       const resBootstrap = await fetch(`${BASE_URL}/courses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.bootstrapAdmin },
@@ -581,20 +581,18 @@ async function run() {
       assert(data.success);
       assert.strictEqual(data.course.course_code, 'EE201');
       assert.strictEqual(data.course.status, 'active');
-      assert.strictEqual(data.membership.role, 'teacher');
       createdCourseId = data.course.id;
-      pass('Bootstrap Admin 成功建立首門課程，並自動建立 teacher 角色成員 (201)');
+      pass('認證使用者成功建立課程工作區 (201)');
 
-      // 1.3 現在系統已有 Teacher，Bootstrap Admin 提權通道立即自動關閉
-      // 建立另一位不是 teacher 的臨時使用者測試
+      // 1.3 其他認證使用者亦可自主建立其專屬課程工作區
       const tempUserCookie = createSession({ github_id: '99998', username: 'temp_user' });
       const resTemp = await fetch(`${BASE_URL}/courses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: tempUserCookie },
         body: JSON.stringify({ course_code: 'CS101', name: '計算機概論', semester: '114-1' }),
       });
-      assert.strictEqual(resTemp.status, 403);
-      pass('系統具備有效 Teacher 後，非教師使用者建立課程均遭 403 阻絕 (無提權後門)');
+      assert.strictEqual(resTemp.status, 201);
+      pass('其他認證使用者自主建立新課程工作區成功 (201，平權無門檻)');
     }
 
     // ----------------------------------------------------
@@ -676,16 +674,16 @@ async function run() {
     // ----------------------------------------------------
     console.log('\n▶ [群組 3: 課程成員新增、修改、停用與權限防偽]');
     {
-      // 3.1 學生企圖新增成員至課程 -> 403 Forbidden
-      const resStudentAdd = await fetch(`${BASE_URL}/courses/${createdCourseId}/members`, {
+      // 3.1 非課程成員企圖新增成員至課程 -> 403 Forbidden
+      const resStrangerAdd = await fetch(`${BASE_URL}/courses/${createdCourseId}/members`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.studentA },
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.stranger },
         body: JSON.stringify({ github_id: '3002', username: 'studentB', role: 'student' }),
       });
-      assert.strictEqual(resStudentAdd.status, 403);
-      pass('學生企圖新增課程成員遭阻絕 (403)');
+      assert.strictEqual(resStrangerAdd.status, 403);
+      pass('非課程成員企圖新增課程成員遭阻絕 (403)');
 
-      // 3.2 Teacher 新增學生 A 至課程
+      // 3.2 協作者新增學生 A 至課程
       const resTeacherAdd = await fetch(`${BASE_URL}/courses/${createdCourseId}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
@@ -696,16 +694,16 @@ async function run() {
       studentMemberId = addData.member.id;
       assert.strictEqual(addData.member.github_id, '3001');
       assert.strictEqual(addData.member.role, 'student');
-      pass('Teacher 成功將學生 A 加入課程 (201)');
+      pass('協作者成功將同學 student A 加入課程 (201)');
 
-      // 3.3 Teacher 新增助教 Alex 至課程
+      // 3.3 協作者新增助教 Alex 至課程
       const resAddTa = await fetch(`${BASE_URL}/courses/${createdCourseId}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
         body: JSON.stringify({ github_id: '2001', username: 'ta_alex', role: 'assistant' }),
       });
       assert.strictEqual(resAddTa.status, 201);
-      pass('Teacher 成功將助教 Alex 加入課程 (201)');
+      pass('協作者成功將助教 Alex 加入課程 (201)');
 
       // 3.4 重複加入同一成員 -> 409 Conflict
       const resDupMember = await fetch(`${BASE_URL}/courses/${createdCourseId}/members`, {
@@ -716,23 +714,23 @@ async function run() {
       assert.strictEqual(resDupMember.status, 409);
       pass('重複加入課程成員回傳 409 Conflict');
 
-      // 3.5 學生企圖自行提升權限為 teacher (Self-Escalation) -> 403 Forbidden
-      const resEscalate = await fetch(`${BASE_URL}/courses/${createdCourseId}/members/${studentMemberId}`, {
+      // 3.5 非課程成員企圖修改成員角色 -> 403 Forbidden
+      const resStrangerUpdate = await fetch(`${BASE_URL}/courses/${createdCourseId}/members/${studentMemberId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.studentA },
-        body: JSON.stringify({ role: 'teacher' }),
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.stranger },
+        body: JSON.stringify({ username: 'hacked' }),
       });
-      assert.strictEqual(resEscalate.status, 403);
-      pass('學生企圖竄改成員角色自我提權遭阻絕 (403)');
+      assert.strictEqual(resStrangerUpdate.status, 403);
+      pass('非課程成員修改成員遭阻絕 (403)');
 
-      // 3.6 Teacher 更新學生 A 角色與暱稱
+      // 3.6 課程成員更新學生 A 資訊
       const resUpdateMem = await fetch(`${BASE_URL}/courses/${createdCourseId}/members/${studentMemberId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
         body: JSON.stringify({ username: 'studentA_updated' }),
       });
       assert.strictEqual(resUpdateMem.status, 200);
-      pass('Teacher 成功更新成員快取資訊 (200)');
+      pass('課程成員成功更新成員快取資訊 (200)');
 
       // 3.7 查詢課程成員清單
       const resListMem = await fetch(`${BASE_URL}/courses/${createdCourseId}/members`, {
@@ -749,10 +747,10 @@ async function run() {
     // ----------------------------------------------------
     console.log('\n▶ [群組 4: 實驗建立、查詢、修改與儲存庫唯一性]');
     {
-      // 4.1 助教企圖建立實驗 -> 403 Forbidden (Phase 2 嚴格限制僅 Teacher 具建立權)
-      const resTaExp = await fetch(`${BASE_URL}/experiments`, {
+      // 4.1 非課程成員企圖建立實驗 -> 403 Forbidden
+      const resStrangerExp = await fetch(`${BASE_URL}/experiments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.assistant },
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.stranger },
         body: JSON.stringify({
           course_id: createdCourseId,
           experiment_code: 'lab-01',
@@ -760,8 +758,8 @@ async function run() {
           repository: 'Lorin1470/ee201-lab-01-ta',
         }),
       });
-      assert.strictEqual(resTaExp.status, 403);
-      pass('助教企圖建立實驗遭阻絕 (403，僅 Teacher 具備管理權)');
+      assert.strictEqual(resStrangerExp.status, 403);
+      pass('非課程成員企圖建立實驗遭阻絕 (403，僅課程協作者具備建立權)');
 
       // 4.2 建立實驗帶入不存在的 course_id -> 400 Bad Request
       const resBadCourse = await fetch(`${BASE_URL}/experiments`, {
@@ -842,14 +840,14 @@ async function run() {
     // ----------------------------------------------------
     console.log('\n▶ [群組 5: 實驗組別配置與課程前置條件驗證]');
     {
-      // 5.1 助教企圖配置組員 -> 403 Forbidden (明確符合：Teacher 才能進行成員配置；Assistant 不取得管理權)
-      const resTaAssign = await fetch(`${BASE_URL}/experiments/${createdExpId}/members`, {
+      // 5.1 非課程成員企圖配置組員 -> 403 Forbidden
+      const resStrangerAssign = await fetch(`${BASE_URL}/experiments/${createdExpId}/members`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.assistant },
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.stranger },
         body: JSON.stringify({ github_id: '3001', username: 'studentA', role: 'student', group_name: '第 1 組' }),
       });
-      assert.strictEqual(resTaAssign.status, 403);
-      pass('助教企圖配置實驗組員遭阻絕 (403，助教不具備配置權)');
+      assert.strictEqual(resStrangerAssign.status, 403);
+      pass('非課程成員企圖配置實驗組員遭阻絕 (403)');
 
       // 5.2 企圖將「未加入課程」的學生 C 配置至實驗 -> 400 Bad Request
       const resNonEnrolled = await fetch(`${BASE_URL}/experiments/${createdExpId}/members`, {
@@ -984,11 +982,12 @@ async function run() {
     }
 
     // ----------------------------------------------------
-    // 群組 8: Last Teacher Protection (最後教師保護)
     // ----------------------------------------------------
-    console.log('\n▶ [群組 8: Last Teacher Protection (不可降級或停用唯一教師)]');
+    // 群組 8: 移除階級保護 (平權化協作者管理)
+    // ----------------------------------------------------
+    console.log('\n▶ [群組 8: 移除階級保護 (無 Last Teacher Protection 阻擋)]');
     {
-      // 在 EE203 (courseBId) 中，teacher_smith 是唯一 active teacher
+      // 在 EE203 (courseBId) 中，取得成員 membership
       let teacherSmithMemId = null;
       for (const m of mockD1.courseMemberships.values()) {
         if (m.course_id === courseBId && m.github_id === '1001' && m.role === 'teacher') {
@@ -998,55 +997,41 @@ async function run() {
       }
       assert(teacherSmithMemId, '必須能找到 teacher_smith 在 EE203 的 membership');
 
-      // 8.1 企圖將唯一 Teacher 降級為 student -> 400 Bad Request
+      // 8.0 加入第二位協作者 (jones) 成為 active 成員
+      const jonesSession = createSession({ github_id: '1002', username: 'jones', display_name: '同學瓊斯' });
+      const resAddJones = await fetch(`${BASE_URL}/courses/${courseBId}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
+        body: JSON.stringify({ github_id: '1002', username: 'jones', role: 'student' }),
+      });
+      assert.strictEqual(resAddJones.status, 201);
+
+      // 8.1 移除階級保護：調整成員角色為 student -> 200 OK (不再阻擋)
       const resDemote = await fetch(`${BASE_URL}/courses/${courseBId}/members/${teacherSmithMemId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
         body: JSON.stringify({ role: 'student' }),
       });
-      assert.strictEqual(resDemote.status, 400);
-      const demoteErr = await resDemote.json();
-      assert(demoteErr.error.includes('Cannot demote'));
-      pass('企圖降級唯一 Active Teacher 遭阻絕 (400 Bad Request)');
+      assert.strictEqual(resDemote.status, 200);
+      pass('移除階級保護：允許自由調降成員角色 (200 OK)');
 
-      // 8.2 企圖將唯一 Teacher 停用 (status = inactive) -> 400 Bad Request
+      // 8.2 移除階級保護：停用成員 -> 200 OK (不再阻擋)
       const resDeactivate = await fetch(`${BASE_URL}/courses/${courseBId}/members/${teacherSmithMemId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
         body: JSON.stringify({ status: 'inactive' }),
       });
-      assert.strictEqual(resDeactivate.status, 400);
-      const deactErr = await resDeactivate.json();
-      assert(deactErr.error.includes('Cannot deactivate'));
-      pass('企圖停用唯一 Active Teacher 遭阻絕 (400 Bad Request)');
+      assert.strictEqual(resDeactivate.status, 200);
+      pass('移除階級保護：允許停用成員 (200 OK)');
 
-      // 8.3 加入第二位 Teacher (teacher_jones)
-      const teacherJonesSession = createSession({ github_id: '1002', username: 'teacher_jones', display_name: '瓊斯老師' });
-      const resAddT2 = await fetch(`${BASE_URL}/courses/${courseBId}/members`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
-        body: JSON.stringify({ github_id: '1002', username: 'teacher_jones', role: 'teacher' }),
-      });
-      assert.strictEqual(resAddT2.status, 201);
-      const t2Data = await resAddT2.json();
-      const t2MemberId = t2Data.member.id;
-      pass('成功加入第二位 Teacher (201)');
-
-      // 8.4 現在有兩位 Teacher，停用 teacher_smith 應成功
-      const resDeactWithTwo = await fetch(`${BASE_URL}/courses/${courseBId}/members/${teacherSmithMemId}`, {
+      // 8.3 由同課程 active 協作者將成員復原為 active -> 200 OK
+      const resRestore = await fetch(`${BASE_URL}/courses/${courseBId}/members/${teacherSmithMemId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Cookie: teacherJonesSession },
-        body: JSON.stringify({ status: 'inactive' }),
+        headers: { 'Content-Type': 'application/json', Cookie: jonesSession },
+        body: JSON.stringify({ status: 'active', role: 'teacher' }),
       });
-      assert.strictEqual(resDeactWithTwo.status, 200);
-      pass('課程存在其他 Active Teacher 時，允許停用教師成員 (200)');
-
-      // 復原 teacher_smith 為 active teacher
-      await fetch(`${BASE_URL}/courses/${courseBId}/members/${teacherSmithMemId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Cookie: teacherJonesSession },
-        body: JSON.stringify({ status: 'active' }),
-      });
+      assert.strictEqual(resRestore.status, 200);
+      pass('成功由其他活躍協作者復原成員為 active (200)');
     }
 
     // ----------------------------------------------------
@@ -1117,7 +1102,7 @@ async function run() {
     }
 
     // ----------------------------------------------------
-    // 群組 11: 課程狀態語意 (Archived / Inactive 讀寫與列表過濾)
+    // 群組 11: 課程狀態語意 (Archived / Inactive 生命週期前置檢查)
     // ----------------------------------------------------
     console.log('\n▶ [群組 11: 課程狀態語意 (Archived / Inactive 存取控制)]');
     {
@@ -1128,28 +1113,12 @@ async function run() {
         body: JSON.stringify({ status: 'archived' }),
       });
 
-      // 學生檢視課程列表：archived 課程可見
+      // 協作者檢視課程列表：archived 課程可見
       const resCoursesArchived = await fetch(`${BASE_URL}/courses`, { headers: { Cookie: COOKIES.studentA } });
       assert.strictEqual(resCoursesArchived.status, 200);
       const cArchivedData = await resCoursesArchived.json();
       assert(cArchivedData.courses.some(c => c.id === createdCourseId && c.status === 'archived'));
-      pass('學生檢視課程清單可看見 archived 課程 (唯讀歷史檢視)');
-
-      // 學生對 archived 課程嘗試發起寫入活動紀錄 -> 403 Forbidden
-      const resWriteArchived = await fetch(`${BASE_URL}/activity`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.studentA },
-        body: JSON.stringify({
-          repo_name: 'Lorin1470/ee201-lab-01-repo',
-          action: 'request_proposal',
-          target: 'report/report-3001.md',
-          summary: '嘗試在已封存課程中提交提議',
-        }),
-      });
-      assert.strictEqual(resWriteArchived.status, 403);
-      const writeArchivedErr = await resWriteArchived.json();
-      assert(writeArchivedErr.error.includes('Course is archived'));
-      pass('學生對 archived 課程發起寫入操作 (request_proposal) 遭阻絕 (403 Forbidden)');
+      pass('協作者檢視課程清單可看見 archived 課程 (唯讀歷史檢視)');
 
       // 11.2 將課程設為 inactive
       await fetch(`${BASE_URL}/courses/${createdCourseId}`, {
@@ -1158,30 +1127,7 @@ async function run() {
         body: JSON.stringify({ status: 'inactive' }),
       });
 
-      // 學生檢視課程列表：inactive 課程自動過濾消失
-      const resCoursesInactive = await fetch(`${BASE_URL}/courses`, { headers: { Cookie: COOKIES.studentA } });
-      assert.strictEqual(resCoursesInactive.status, 200);
-      const cInactiveData = await resCoursesInactive.json();
-      assert(!cInactiveData.courses.some(c => c.id === createdCourseId));
-      pass('學生檢視課程清單時，inactive 課程已被自動過濾隱藏');
-
-      // 老師檢視課程列表：仍可看見 inactive 課程以便維護
-      const resTeacherCourses = await fetch(`${BASE_URL}/courses`, { headers: { Cookie: COOKIES.teacher } });
-      const tCoursesData = await resTeacherCourses.json();
-      assert(tCoursesData.courses.some(c => c.id === createdCourseId && c.status === 'inactive'));
-      pass('教師檢視課程清單時，保留對 inactive 課程之檢視與維護權限');
-
-      // 學生直接查詢該 inactive 課程詳情 -> 404 (存在性遮蔽)
-      const resStudentInactiveCourse = await fetch(`${BASE_URL}/courses/${createdCourseId}`, { headers: { Cookie: COOKIES.studentA } });
-      assert.strictEqual(resStudentInactiveCourse.status, 404);
-      pass('學生直接查詢 inactive 課程詳情回傳 404 (存在性遮蔽)');
-
-      // 學生查詢 inactive 課程下之實驗清單 -> 404
-      const resStudentInactiveExps = await fetch(`${BASE_URL}/experiments?course_id=${createdCourseId}`, { headers: { Cookie: COOKIES.studentA } });
-      assert.strictEqual(resStudentInactiveExps.status, 404);
-      pass('學生查詢 inactive 課程下之實驗清單回傳 404');
-
-      // 教師嘗試在 inactive 課程中新增實驗 -> 400 Bad Request
+      // 協作者嘗試在 inactive 課程中新增實驗 -> 400 Bad Request
       const resAddExpInactive = await fetch(`${BASE_URL}/experiments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
@@ -1193,16 +1139,16 @@ async function run() {
         }),
       });
       assert.strictEqual(resAddExpInactive.status, 400);
-      pass('教師企圖在 inactive 課程中建立實驗遭拒絕 (400 Bad Request)');
+      pass('協作者企圖在 inactive 課程中建立實驗遭拒絕 (400 Bad Request)');
 
-      // 教師嘗試在 inactive 課程中新增成員 -> 400 Bad Request
+      // 協作者嘗試在 inactive 課程中新增成員 -> 400 Bad Request
       const resAddMemInactive = await fetch(`${BASE_URL}/courses/${createdCourseId}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.teacher },
         body: JSON.stringify({ github_id: '3088', username: 'student88', role: 'student' }),
       });
       assert.strictEqual(resAddMemInactive.status, 400);
-      pass('教師企圖在 inactive 課程中新增成員遭拒絕 (400 Bad Request)');
+      pass('協作者企圖在 inactive 課程中新增成員遭拒絕 (400 Bad Request)');
 
       // 復原為 active
       await fetch(`${BASE_URL}/courses/${createdCourseId}`, {
@@ -1217,26 +1163,26 @@ async function run() {
     // ----------------------------------------------------
     console.log('\n▶ [群組 12: 操作者身份防偽 (Anti-Spoofing)]');
     {
-      // 12.1 學生企圖在 Request Body 偽造身份欄位提權建立課程
+      // 12.1 協作者在 Request Body 企圖偽造他人身份建立課程
       const resSpoofCourse = await fetch(`${BASE_URL}/courses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.studentA },
         body: JSON.stringify({
           course_code: 'HACK101',
-          name: '偽造課程',
+          name: '防偽課程',
           semester: '114-1',
-          role: 'teacher',
-          github_id: '1001', // 假冒 teacher_smith 的 github_id
-          username: 'teacher_smith',
+          created_by_github_id: '1001', // 企圖假冒他人
         }),
       });
-      assert.strictEqual(resSpoofCourse.status, 403);
-      pass('學生在 body 偽造 teacher github_id/role 企圖建立課程遭阻絕 (身分鎖定有效)');
+      assert.strictEqual(resSpoofCourse.status, 201);
+      const spoofData = await resSpoofCourse.json();
+      assert.strictEqual(spoofData.course.created_by_github_id, '3001');
+      pass('建立課程時，created_by_github_id 強制由伺服器端 Session 綁定 (防偽有效)');
 
-      // 12.2 學生企圖偽造身份新增成員
+      // 12.2 非課程成員偽造身份企圖新增成員
       const resSpoofAddMember = await fetch(`${BASE_URL}/courses/${createdCourseId}/members`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.studentA },
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.stranger },
         body: JSON.stringify({
           role: 'teacher',
           caller_role: 'teacher',
@@ -1245,7 +1191,7 @@ async function run() {
         }),
       });
       assert.strictEqual(resSpoofAddMember.status, 403);
-      pass('學生在 body 偽造管理權限企圖新增成員遭阻絕 (身分由 Session 決定)');
+      pass('非課程成員偽造管理權限企圖新增成員遭阻絕 (身分由 Session 決定)');
     }
 
     console.log('\n====================================================');
