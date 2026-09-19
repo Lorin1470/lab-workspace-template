@@ -45,6 +45,7 @@ export interface WorkspaceFileItem {
 export interface WorkspaceFileContent {
   path: string;
   content: string;
+  content_base64?: string;
   sha: string;
   size: number;
   encoding: 'utf-8' | 'base64';
@@ -188,6 +189,11 @@ export function base64ToString(b64: string): string {
   const bytes = base64ToUint8Array(b64);
   const decoder = new TextDecoder('utf-8');
   return decoder.decode(bytes);
+}
+
+function isImagePath(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp');
 }
 
 /**
@@ -481,6 +487,9 @@ export async function readFile(
   return {
     path: normPath,
     content: textContent,
+    ...(isImagePath(normPath) && data.content && data.encoding === 'base64'
+      ? { content_base64: data.content }
+      : {}),
     sha: data.sha,
     size: data.size || 0,
     encoding: 'utf-8',

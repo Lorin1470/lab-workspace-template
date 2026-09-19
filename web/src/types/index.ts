@@ -236,6 +236,7 @@ export interface WorkspaceFileContent {
   size: number;
   encoding: string;
   content: string;
+  content_base64?: string;
   sha: string;
   type: 'file';
 }

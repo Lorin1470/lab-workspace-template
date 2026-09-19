@@ -111,6 +111,13 @@ function isImagePath(path: string): boolean {
   );
 }
 
+function imageMimeType(path: string): string {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return 'image/png';
+}
+
 // 判斷是否為 Markdown 路徑
 function isMarkdownPath(path: string): boolean {
   return path.toLowerCase().endsWith('.md');
@@ -923,7 +930,11 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                   <div className="flex flex-col items-center justify-center p-6 space-y-4 bg-slate-50 rounded-xl border border-slate-200 h-full">
                     <div className="max-w-md max-h-96 overflow-hidden rounded-lg shadow-sm border border-slate-200 bg-white p-2">
                       <img
-                        src={`https://raw.githubusercontent.com/${experiment.repository}/main/${selectedPath}`}
+                        src={
+                          currentFile?.content_base64
+                            ? `data:${imageMimeType(selectedPath)};base64,${currentFile.content_base64}`
+                            : `https://raw.githubusercontent.com/${experiment.repository}/main/${selectedPath}`
+                        }
                         alt={selectedPath}
                         className="max-h-80 w-auto object-contain mx-auto rounded"
                         onError={(e) => {
