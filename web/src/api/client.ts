@@ -203,6 +203,51 @@ export const api = {
     },
   },
 
+  agent: {
+    context: async (experimentId: string): Promise<{
+      experiment: {
+        id: string;
+        code: string;
+        name: string;
+        repository: string;
+        course_id: string;
+        report_mode: ReportMode;
+        status: string;
+        provisioning_status: string;
+      };
+      actor: { github_id: string; username: string };
+      root_files: WorkspaceFileItem[];
+      rules: { raw: string; photos: string; reports: string; writes: string };
+    }> => {
+      const data = await request<{ success: boolean; context: any }>(
+        `/api/experiments/${encodeURIComponent(experimentId)}/agent/context`
+      );
+      return data.context;
+    },
+    readFile: async (experimentId: string, path: string): Promise<WorkspaceFileContent> => {
+      const data = await request<{ success: boolean; file: WorkspaceFileContent }>(
+        `/api/experiments/${encodeURIComponent(experimentId)}/agent/execute`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ operation: 'read_file', path }),
+        }
+      );
+      return data.file;
+    },
+    writeFile: async (
+      experimentId: string,
+      data: { path: string; content: string; message: string; sha: string }
+    ): Promise<WorkspaceWriteResponse> => {
+      return request<WorkspaceWriteResponse>(
+        `/api/experiments/${encodeURIComponent(experimentId)}/agent/execute`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ operation: 'write_file', ...data, confirmed: true }),
+        }
+      );
+    },
+  },
+
   // 實驗成員管理 (Experiment Memberships)
   experimentMembers: {
     list: async (experimentId: string): Promise<ExperimentMembership[]> => {

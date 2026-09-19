@@ -2012,6 +2012,195 @@ export const onRequest = async (context: any) => {
       }
     }
 
+    // 4.10a Agent Workflow context and explicit-confirmation execution
+    const expAgentMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/agent(?:\/(context|execute))?$/);
+    if (expAgentMatch) {
+      if (request.method !== 'GET' && request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+
+      const expId = expAgentMatch[1];
+      const agentAction = expAgentMatch[2] || 'context';
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(
+        env.DB.prepare(
+          'SELECT id, experiment_code, name, repository, course_id, report_mode, status, provisioning_status FROM experiments WHERE id = ?'
+        ).bind(expId)
+      );
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      if (!perm.allowed) {
+        return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), {
+          status: 403,
+          headers,
+        });
+      }
+
+      if (request.method === 'GET' || agentAction === 'context') {
+        try {
+          const items = await listFiles(env, expId, '', sessionUser, env.FETCH || fetch);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              context: {
+                experiment: {
+                  id: exp.id,
+                  code: exp.experiment_code,
+                  name: exp.name,
+                  repository: exp.repository,
+                  course_id: exp.course_id,
+                  report_mode: exp.report_mode || 'shared',
+                  status: exp.status,
+                  provisioning_status: exp.provisioning_status,
+                },
+                actor: {
+                  github_id: sessionUser.github_id,
+                  username: sessionUser.username,
+                },
+                root_files: items,
+                rules: {
+                  raw: 'raw/ is immutable. Use the dedicated raw upload workflow; duplicate names are rejected.',
+                  photos: 'Photos belong under photos/ and must be jpg, jpeg, png, or webp and no larger than 5MB.',
+                  reports:
+                    exp.report_mode === 'separate'
+                      ? `Only report/report-${sessionUser.github_id}.md may be modified by this collaborator.`
+                      : 'The shared report is editable by collaborators.',
+                  writes: 'Every write requires the current file SHA and explicit confirmation.',
+                },
+              },
+            }),
+            { status: 200, headers }
+          );
+        } catch (err: any) {
+          const status = err instanceof WorkspaceError ? err.status : err.status || 500;
+          return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+        }
+      }
+
+      if (agentAction !== 'execute') {
+        return new Response(JSON.stringify({ error: 'Unknown Agent action' }), { status: 404, headers });
+      }
+
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+      }
+
+      const operation = body?.operation;
+      if (operation === 'read_file') {
+        if (!body.path || typeof body.path !== 'string') {
+          return new Response(JSON.stringify({ error: 'Missing required field: path' }), { status: 400, headers });
+        }
+        try {
+          const fileData = await readFile(env, expId, body.path, sessionUser, env.FETCH || fetch);
+          return new Response(JSON.stringify({ success: true, operation, file: fileData }), { status: 200, headers });
+        } catch (err: any) {
+          const status = err instanceof WorkspaceError ? err.status : err.status || 500;
+          return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+        }
+      }
+
+      if (operation !== 'write_file') {
+        return new Response(JSON.stringify({ error: 'Unsupported Agent operation' }), { status: 400, headers });
+      }
+      if (body.confirmed !== true) {
+        return new Response(JSON.stringify({ error: 'Explicit confirmation is required before Agent writes' }), {
+          status: 400,
+          headers,
+        });
+      }
+      if (
+        typeof body.path !== 'string' ||
+        typeof body.content !== 'string' ||
+        typeof body.message !== 'string' ||
+        !body.message.trim() ||
+        (body.sha !== undefined && typeof body.sha !== 'string')
+      ) {
+        return new Response(
+          JSON.stringify({ error: 'write_file requires path, content, and message; existing files should include current sha' }),
+          { status: 400, headers }
+        );
+      }
+
+      let normPath: string;
+      try {
+        normPath = validateWorkspacePath(body.path, { allowEmpty: false });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status: 400, headers });
+      }
+      if (isWorkspaceRawSanctuaryPath(normPath)) {
+        return new Response(
+          JSON.stringify({ error: 'Raw sanctuary violation: use the dedicated raw upload workflow' }),
+          { status: 403, headers }
+        );
+      }
+
+      try {
+        const writeResult = await createOrUpdateFile(
+          env,
+          expId,
+          normPath,
+          body.content,
+          body.message.trim(),
+          sessionUser,
+          { sha: typeof body.sha === 'string' && body.sha.trim() ? body.sha.trim() : undefined },
+          env.FETCH || fetch
+        );
+        const action = writeResult.action === 'created' ? 'file_created' : 'file_modified';
+        const nowIso = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO activity_logs (
+            id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
+            actor_avatar, requested_by, approved_by, approval_status, action, target, summary, files_changed, commit_sha
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          crypto.randomUUID(),
+          exp.repository,
+          exp.experiment_code,
+          nowIso,
+          'agent',
+          sessionUser.username,
+          sessionUser.display_name || sessionUser.username,
+          sessionUser.avatar_url || null,
+          sessionUser.username,
+          sessionUser.username,
+          'approved',
+          action,
+          normPath,
+          `Agent ${action === 'file_created' ? 'created' : 'updated'} ${normPath}`,
+          JSON.stringify([normPath]),
+          writeResult.commit_sha
+        ).run();
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            operation,
+            path: normPath,
+            commit_sha: writeResult.commit_sha,
+            content_sha: writeResult.content_sha,
+            action: writeResult.action,
+          }),
+          { status: 200, headers }
+        );
+      } catch (err: any) {
+        const status = err instanceof WorkspaceError ? err.status : err.status || 500;
+        return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+      }
+    }
+
     // 4.11 實驗工作區單一檔案讀取與寫入 (GET /api/experiments/:id/workspace/file, PUT /api/experiments/:id/workspace/file)
     const expWsFileMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/workspace\/file$/);
     if (expWsFileMatch) {

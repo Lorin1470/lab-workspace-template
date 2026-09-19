@@ -592,8 +592,66 @@ async function runAllTests() {
       pass("4. 未登入 POST /workspace/photos 回傳 401 Unauthorized");
     }
 
+    // Agent Workflow authentication and safety boundary
+    {
+      const res = await api("/experiments/exp-01/agent/context");
+      assert.strictEqual(res.status, 401);
+      pass("5. 未登入 GET /agent/context 回傳 401 Unauthorized");
+    }
+    {
+      const res = await api("/experiments/exp-01/agent/context", {
+        headers: { Cookie: aliceCookie },
+      });
+      assert.strictEqual(res.status, 200);
+      assert.ok(res.data.context?.experiment?.repository);
+      assert.ok(Array.isArray(res.data.context?.root_files));
+      pass("6. 協作者可取得 Agent experiment context 與真實根目錄檔案");
+    }
+    {
+      const res = await api("/experiments/exp-01/agent/execute", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: { operation: "read_file", path: "README.md" },
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.data.operation, "read_file");
+      assert.ok(res.data.file?.sha);
+      pass("7. Agent 可透過受控 endpoint 讀取檔案與 SHA");
+    }
+    {
+      const res = await api("/experiments/exp-01/agent/execute", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: {
+          operation: "write_file",
+          path: "notes.md",
+          content: "agent write",
+          message: "agent write",
+        },
+      });
+      assert.strictEqual(res.status, 400);
+      assert.match(res.data.error, /Explicit confirmation/);
+      pass("8. Agent 寫入缺少明確確認時遭阻擋");
+    }
+    {
+      const res = await api("/experiments/exp-01/agent/execute", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: {
+          operation: "write_file",
+          path: "raw/blocked.csv",
+          content: "agent must not touch raw",
+          message: "agent raw write",
+          confirmed: true,
+          sha: "sha-raw",
+        },
+      });
+      assert.strictEqual(res.status, 403);
+      pass("9. Agent 無法繞過 Raw Sanctuary 寫入");
+    }
+
     // ----------------------------------------------------
-    // 群組 2: Authorization 授權邊界 (測試 5-7)
+    // 群組 2: Authorization 授權邊界 (測試 10-12)
     // ----------------------------------------------------
     console.log("\n▶ [群組 2: Authorization 協作者授權邊界 (403 vs 200)]");
 
