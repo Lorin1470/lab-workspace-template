@@ -85,6 +85,39 @@ async function getSessionUser(request: Request, env: Env): Promise<{
   return row;
 }
 
+// 檢查使用者是否為該課程之合法 active Teacher
+export async function isCourseTeacher(env: Env, courseId: string, githubId: string): Promise<boolean> {
+  if (!env.DB || !courseId || !githubId) return false;
+  const stmt = env.DB.prepare(
+    'SELECT id, role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
+  ).bind(courseId, githubId);
+  const mem: any = await safeD1First(stmt);
+  if (mem && mem.role === 'teacher') return true;
+
+  // Bootstrap Admin fallback (僅限全系統 0 active Teacher 時)
+  if (env.INITIAL_ADMIN_GITHUB_ID && githubId === env.INITIAL_ADMIN_GITHUB_ID) {
+    const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
+    if (tcRow && tcRow.count === 0) return true;
+  }
+  return false;
+}
+
+// 檢查使用者是否具備建立新課程權限 (既有 Teacher 或全系統 0 active Teacher 時之 Bootstrap Admin)
+export async function canUserCreateCourse(env: Env, githubId: string): Promise<boolean> {
+  if (!env.DB || !githubId) return false;
+  const stmt = env.DB.prepare(
+    'SELECT id FROM course_memberships WHERE github_id = ? AND role = "teacher" AND status = "active" LIMIT 1'
+  ).bind(githubId);
+  const existingTeacher: any = await safeD1First(stmt);
+  if (existingTeacher) return true;
+
+  if (env.INITIAL_ADMIN_GITHUB_ID && githubId === env.INITIAL_ADMIN_GITHUB_ID) {
+    const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
+    if (tcRow && tcRow.count === 0) return true;
+  }
+  return false;
+}
+
 // 1. 安全路徑正規化 (Repository-relative path normalization)
 export function normalizeRepoPath(rawPath: string | null | undefined): string {
   if (!rawPath || typeof rawPath !== 'string') return '';
@@ -173,12 +206,12 @@ export async function resolveExperimentPermission(
 
   if (exp) {
     const stmt = env.DB.prepare(
-      'SELECT id, course_code, name, semester, created_by_github_id FROM courses WHERE id = ?'
+      'SELECT id, course_code, name, semester, status, created_by_github_id FROM courses WHERE id = ?'
     ).bind(exp.course_id);
     course = await safeD1First(stmt);
   } else if (context.course_id) {
     const stmt = env.DB.prepare(
-      'SELECT id, course_code, name, semester, created_by_github_id FROM courses WHERE id = ?'
+      'SELECT id, course_code, name, semester, status, created_by_github_id FROM courses WHERE id = ?'
     ).bind(context.course_id);
     course = await safeD1First(stmt);
   }
@@ -224,10 +257,10 @@ export async function resolveExperimentPermission(
     }
   }
 
-  // 3. 安全 Bootstrap Admin 檢查 (只有當系統內完全沒有任何 teacher 角色時，才允許 INITIAL_ADMIN_GITHUB_ID 提權)
+  // 3. 安全 Bootstrap Admin 檢查 (只有當系統內完全沒有任何 active teacher 角色時，才允許 INITIAL_ADMIN_GITHUB_ID 提權)
   if (resolvedRole === 'guest' && env.INITIAL_ADMIN_GITHUB_ID && user.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
     const stmt = env.DB.prepare(
-      'SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher"'
+      'SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'
     );
     const teacherCountRow: any = await safeD1First(stmt);
     const teacherCount = teacherCountRow ? teacherCountRow.count : 0;
@@ -249,6 +282,36 @@ export async function resolveExperimentPermission(
 
   const reportMode: 'shared' | 'separate' = exp?.report_mode || 'shared';
 
+  const isWriteAction = action
+    ? ['file_created', 'file_modified', 'commit_created', 'push_completed', 'request_proposal'].includes(action)
+    : false;
+
+  // 檢查 Course 狀態 (active / archived / inactive)
+  if (course && course.status && course.status !== 'active') {
+    if (resolvedRole === 'student') {
+      if (course.status === 'inactive') {
+        return {
+          allowed: false,
+          role: 'guest',
+          reason: 'Course is inactive: Access denied for students',
+          course,
+          experiment: exp,
+          report_mode: reportMode,
+        };
+      }
+      if (isWriteAction) {
+        return {
+          allowed: false,
+          role: resolvedRole,
+          reason: 'Course is archived: Student write operations are prohibited',
+          course,
+          experiment: exp,
+          report_mode: reportMode,
+        };
+      }
+    }
+  }
+
   // D. 業務行為與路徑合規檢查 (Guardrails)
   if (action) {
     const normTarget = normalizeRepoPath(targetPath);
@@ -256,13 +319,6 @@ export async function resolveExperimentPermission(
 
     // 鐵律 1: raw 聖域保護 (所有角色均嚴格禁止修改 raw/*)
     const touchesRaw = isRawSanctuaryPath(normTarget) || filesList.some(isRawSanctuaryPath);
-    const isWriteAction = [
-      'file_created',
-      'file_modified',
-      'commit_created',
-      'push_completed',
-      'request_proposal',
-    ].includes(action);
 
     if (touchesRaw && isWriteAction) {
       return {
@@ -368,7 +424,7 @@ export const onRequest = async (context: any) => {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
 
@@ -977,7 +1033,9 @@ export const onRequest = async (context: any) => {
       return new Response(JSON.stringify({ success: true }), { headers: responseHeaders });
     }
 
-    // 4. 課程、實驗與成員權限 API (Course / Experiment / Membership)
+    // 4. 課程、實驗與成員管理 API (Course / Experiment / Membership Management)
+
+    // 4.1 Courses 集合操作 (GET: 列表, POST: 建立)
     if (path === 'courses') {
       const sessionUser = await getSessionUser(request, env);
       if (!sessionUser) {
@@ -987,29 +1045,391 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ success: true, courses: [] }), { headers });
       }
 
-      // 查詢使用者為 active 成員的所有課程
-      const res: any = await env.DB.prepare(
-        `SELECT c.id, c.course_code, c.name, c.semester, c.created_by_github_id, c.created_at, c.updated_at, cm.role
-         FROM courses c
-         JOIN course_memberships cm ON c.id = cm.course_id
-         WHERE cm.github_id = ? AND cm.status = 'active'
-         ORDER BY c.semester DESC, c.course_code ASC`
-      ).bind(sessionUser.github_id).all();
+      if (request.method === 'GET') {
+        // 查詢使用者為 active 成員的所有課程 (包含 status，學生過濾 inactive)
+        const res: any = await env.DB.prepare(
+          `SELECT c.id, c.course_code, c.name, c.semester, c.status, c.created_by_github_id, c.created_at, c.updated_at, cm.role
+           FROM courses c
+           JOIN course_memberships cm ON c.id = cm.course_id
+           WHERE cm.github_id = ? AND cm.status = 'active'
+             AND (cm.role IN ('teacher', 'assistant') OR c.status != 'inactive')
+           ORDER BY c.semester DESC, c.course_code ASC`
+        ).bind(sessionUser.github_id).all();
 
-      let coursesList = res.results || [];
+        let coursesList = res.results || [];
 
-      // 若未加入任何課程，檢查是否為 Bootstrap 管理員 (系統尚無任何 teacher 時啟用)
-      if (coursesList.length === 0 && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
-        const tcRow: any = await env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher"').first();
-        if (tcRow && tcRow.count === 0) {
-          const allCourses: any = await env.DB.prepare('SELECT * FROM courses ORDER BY semester DESC, course_code ASC').all();
-          coursesList = (allCourses.results || []).map((c: any) => ({ ...c, role: 'teacher' }));
+        // 若未加入任何課程，檢查是否為 Bootstrap 管理員 (系統尚無任何 active teacher 時啟用)
+        if (coursesList.length === 0 && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
+          const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
+          if (tcRow && tcRow.count === 0) {
+            const allCourses: any = await env.DB.prepare('SELECT * FROM courses ORDER BY semester DESC, course_code ASC').all();
+            coursesList = (allCourses.results || []).map((c: any) => ({ ...c, role: 'teacher' }));
+          }
         }
+
+        return new Response(JSON.stringify({ success: true, courses: coursesList }), { headers });
       }
 
-      return new Response(JSON.stringify({ success: true, courses: coursesList }), { headers });
+      if (request.method === 'POST') {
+        const canCreate = await canUserCreateCourse(env, sessionUser.github_id);
+        if (!canCreate) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only teachers can create courses' }), { status: 403, headers });
+        }
+
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        const course_code = String(body.course_code || '').trim();
+        const name = String(body.name || '').trim();
+        const semester = String(body.semester || '').trim();
+
+        if (!course_code || !name || !semester) {
+          return new Response(JSON.stringify({ error: 'course_code, name, and semester are required' }), { status: 400, headers });
+        }
+
+        // 檢查 UNIQUE(course_code, semester)
+        const existing: any = await safeD1First(
+          env.DB.prepare('SELECT id FROM courses WHERE course_code = ? AND semester = ?').bind(course_code, semester)
+        );
+        if (existing) {
+          return new Response(JSON.stringify({ error: 'Conflict: Course with this course_code and semester already exists' }), { status: 409, headers });
+        }
+
+        const courseId = `c_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+        const memId = `cm_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+        const now = new Date().toISOString();
+
+        const stmtCourse = env.DB.prepare(
+          `INSERT INTO courses (id, course_code, name, semester, status, created_by_github_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(courseId, course_code, name, semester, 'active', sessionUser.github_id, now, now);
+
+        // 建立者自動成為該課程之 Teacher (原子化批次執行，防範孤兒課程)
+        const stmtMember = env.DB.prepare(
+          `INSERT INTO course_memberships (id, course_id, github_id, username, role, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(memId, courseId, sessionUser.github_id, sessionUser.username, 'teacher', 'active', now, now);
+
+        try {
+          if (typeof env.DB.batch === 'function') {
+            await env.DB.batch([stmtCourse, stmtMember]);
+          } else {
+            await stmtCourse.run();
+            await stmtMember.run();
+          }
+        } catch (dbErr: any) {
+          const errMsg = String(dbErr?.message || dbErr);
+          if (errMsg.includes('UNIQUE constraint failed')) {
+            return new Response(JSON.stringify({ error: 'Conflict: Course with this course_code and semester already exists' }), { status: 409, headers });
+          }
+          throw dbErr;
+        }
+
+        const createdCourse: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId));
+        return new Response(JSON.stringify({
+          success: true,
+          course: { ...createdCourse, role: 'teacher' },
+          membership: { id: memId, course_id: courseId, github_id: sessionUser.github_id, username: sessionUser.username, role: 'teacher', status: 'active' }
+        }), { status: 201, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
     }
 
+    // 4.2 單一 Course 詳情與修改 (GET /api/courses/:id, PATCH /api/courses/:id)
+    const courseIdMatch = path.match(/^courses\/([a-zA-Z0-9_-]+)$/);
+    if (courseIdMatch) {
+      const courseId = courseIdMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const course: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId));
+      if (!course) {
+        return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
+      }
+
+      // 檢查使用者在該課程的角色
+      const courseMem: any = await safeD1First(
+        env.DB.prepare('SELECT role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"').bind(courseId, sessionUser.github_id)
+      );
+      let userRole = courseMem ? courseMem.role : null;
+      if (!userRole && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
+        const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
+        if (tcRow && tcRow.count === 0) userRole = 'teacher';
+      }
+
+      if (!userRole || (course.status === 'inactive' && userRole === 'student')) {
+        // 存在性遮蔽：非成員或已停用課程對學生無法窺探
+        return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
+      }
+
+      if (request.method === 'GET') {
+        return new Response(JSON.stringify({ success: true, course: { ...course, role: userRole } }), { status: 200, headers });
+      }
+
+      if (request.method === 'PATCH') {
+        if (userRole !== 'teacher') {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can update course details' }), { status: 403, headers });
+        }
+
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        const updates: string[] = [];
+        const binds: any[] = [];
+
+        if (body.name !== undefined) {
+          const val = String(body.name).trim();
+          if (!val) return new Response(JSON.stringify({ error: 'name cannot be empty' }), { status: 400, headers });
+          updates.push('name = ?');
+          binds.push(val);
+        }
+
+        if (body.semester !== undefined) {
+          const val = String(body.semester).trim();
+          if (!val) return new Response(JSON.stringify({ error: 'semester cannot be empty' }), { status: 400, headers });
+          // 檢查衝突
+          const conflict: any = await safeD1First(
+            env.DB.prepare('SELECT id FROM courses WHERE course_code = ? AND semester = ? AND id != ?').bind(course.course_code, val, courseId)
+          );
+          if (conflict) {
+            return new Response(JSON.stringify({ error: 'Conflict: Course code and semester already exists' }), { status: 409, headers });
+          }
+          updates.push('semester = ?');
+          binds.push(val);
+        }
+
+        if (body.status !== undefined) {
+          if (!['active', 'archived', 'inactive'].includes(body.status)) {
+            return new Response(JSON.stringify({ error: 'Invalid status: must be active, archived, or inactive' }), { status: 400, headers });
+          }
+          updates.push('status = ?');
+          binds.push(body.status);
+        }
+
+        if (updates.length === 0) {
+          return new Response(JSON.stringify({ error: 'No valid fields provided for update' }), { status: 400, headers });
+        }
+
+        const now = new Date().toISOString();
+        updates.push('updated_at = ?');
+        binds.push(now);
+        binds.push(courseId);
+
+        try {
+          await env.DB.prepare(`UPDATE courses SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+        } catch (dbErr: any) {
+          const errMsg = String(dbErr?.message || dbErr);
+          if (errMsg.includes('UNIQUE constraint failed')) {
+            return new Response(JSON.stringify({ error: 'Conflict: Course code and semester already exists' }), { status: 409, headers });
+          }
+          throw dbErr;
+        }
+        const updatedCourse: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId));
+        return new Response(JSON.stringify({ success: true, course: { ...updatedCourse, role: userRole } }), { status: 200, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.3 課程成員管理 (GET /api/courses/:id/members, POST /api/courses/:id/members)
+    const courseMembersMatch = path.match(/^courses\/([a-zA-Z0-9_-]+)\/members$/);
+    if (courseMembersMatch) {
+      const courseId = courseMembersMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const course: any = await safeD1First(env.DB.prepare('SELECT id, status FROM courses WHERE id = ?').bind(courseId));
+      if (!course) {
+        return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
+      }
+
+      const isTeacher = await isCourseTeacher(env, courseId, sessionUser.github_id);
+
+      if (request.method === 'GET') {
+        const myMem: any = await safeD1First(
+          env.DB.prepare('SELECT role FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"').bind(courseId, sessionUser.github_id)
+        );
+        if ((!myMem && !isTeacher) || (course.status === 'inactive' && !isTeacher)) {
+          return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
+        }
+
+        const res: any = await env.DB.prepare(
+          'SELECT id, course_id, github_id, username, role, status, created_at, updated_at FROM course_memberships WHERE course_id = ? ORDER BY role DESC, username ASC'
+        ).bind(courseId).all();
+
+        return new Response(JSON.stringify({ success: true, course_members: res.results || [] }), { headers });
+      }
+
+      if (request.method === 'POST') {
+        if (!isTeacher) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can manage course members' }), { status: 403, headers });
+        }
+
+        if (course.status !== 'active') {
+          return new Response(JSON.stringify({ error: `Cannot add members to a ${course.status} course` }), { status: 400, headers });
+        }
+
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        const github_id = String(body.github_id || '').trim();
+        const username = String(body.username || '').trim();
+        const role = String(body.role || '').trim();
+
+        if (!github_id || !username || !role) {
+          return new Response(JSON.stringify({ error: 'github_id, username, and role are required' }), { status: 400, headers });
+        }
+
+        if (!['teacher', 'assistant', 'student'].includes(role)) {
+          return new Response(JSON.stringify({ error: 'Invalid role: must be teacher, assistant, or student' }), { status: 400, headers });
+        }
+
+        // 檢查 UNIQUE(course_id, github_id)
+        const existingMem: any = await safeD1First(
+          env.DB.prepare('SELECT id, status FROM course_memberships WHERE course_id = ? AND github_id = ?').bind(courseId, github_id)
+        );
+        if (existingMem) {
+          if (existingMem.status === 'active') {
+            return new Response(JSON.stringify({ error: 'Conflict: User is already an active member of this course' }), { status: 409, headers });
+          }
+          const now = new Date().toISOString();
+          await env.DB.prepare(
+            'UPDATE course_memberships SET role = ?, username = ?, status = "active", updated_at = ? WHERE id = ?'
+          ).bind(role, username, now, existingMem.id).run();
+          const reactivated: any = await safeD1First(env.DB.prepare('SELECT * FROM course_memberships WHERE id = ?').bind(existingMem.id));
+          return new Response(JSON.stringify({ success: true, member: reactivated }), { status: 200, headers });
+        }
+
+        const memId = `cm_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO course_memberships (id, course_id, github_id, username, role, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(memId, courseId, github_id, username, role, 'active', now, now).run();
+
+        const createdMember: any = await safeD1First(env.DB.prepare('SELECT * FROM course_memberships WHERE id = ?').bind(memId));
+        return new Response(JSON.stringify({ success: true, member: createdMember }), { status: 201, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.4 單一課程成員修改與停用 (PATCH /api/courses/:id/members/:memberId)
+    // 依據架構規範：不提供 DELETE 端點，一律透過 PATCH 更新 status='inactive'；DELETE 請求回傳 405
+    const courseMemberItemMatch = path.match(/^courses\/([a-zA-Z0-9_-]+)\/members\/([a-zA-Z0-9_-]+)$/);
+    if (courseMemberItemMatch) {
+      const courseId = courseMemberItemMatch[1];
+      const memberId = courseMemberItemMatch[2];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      // IDOR 防護 1: 檢查所屬課程是否存在
+      const course: any = await safeD1First(env.DB.prepare('SELECT id FROM courses WHERE id = ?').bind(courseId));
+      if (!course) {
+        return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
+      }
+
+      const isTeacher = await isCourseTeacher(env, courseId, sessionUser.github_id);
+      if (!isTeacher) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can manage course members' }), { status: 403, headers });
+      }
+
+      // IDOR 防護 2: 嚴格比對 memberId 與 courseId，找不到或不匹配一律 404 (防止洩漏其他課程成員存在性)
+      const targetMem: any = await safeD1First(
+        env.DB.prepare('SELECT * FROM course_memberships WHERE id = ? AND course_id = ?').bind(memberId, courseId)
+      );
+      if (!targetMem) {
+        return new Response(JSON.stringify({ error: 'Course member not found' }), { status: 404, headers });
+      }
+
+      if (request.method === 'PATCH') {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        const updates: string[] = [];
+        const binds: any[] = [];
+
+        // Last Teacher Protection: 不可降級或停用最後一位 Active Teacher
+        if (targetMem.role === 'teacher' && targetMem.status === 'active') {
+          const isDemoting = body.role !== undefined && body.role !== 'teacher';
+          const isDeactivating = body.status !== undefined && body.status !== 'active';
+          if (isDemoting || isDeactivating) {
+            const tcRow: any = await safeD1First(
+              env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE course_id = ? AND role = "teacher" AND status = "active"').bind(courseId)
+            );
+            if (tcRow && tcRow.count <= 1) {
+              const actionName = isDemoting ? 'demote' : 'deactivate';
+              return new Response(JSON.stringify({ error: `Cannot ${actionName} the only active teacher in this course` }), { status: 400, headers });
+            }
+          }
+        }
+
+        if (body.role !== undefined) {
+          if (!['teacher', 'assistant', 'student'].includes(body.role)) {
+            return new Response(JSON.stringify({ error: 'Invalid role' }), { status: 400, headers });
+          }
+          updates.push('role = ?');
+          binds.push(body.role);
+        }
+
+        if (body.status !== undefined) {
+          if (!['active', 'inactive', 'suspended'].includes(body.status)) {
+            return new Response(JSON.stringify({ error: 'Invalid status' }), { status: 400, headers });
+          }
+          updates.push('status = ?');
+          binds.push(body.status);
+        }
+
+        if (body.username !== undefined) {
+          const u = String(body.username).trim();
+          if (u) {
+            updates.push('username = ?');
+            binds.push(u);
+          }
+        }
+
+        if (updates.length === 0) {
+          return new Response(JSON.stringify({ error: 'No valid fields provided for update' }), { status: 400, headers });
+        }
+
+        const now = new Date().toISOString();
+        updates.push('updated_at = ?');
+        binds.push(now);
+        binds.push(memberId);
+
+        await env.DB.prepare(`UPDATE course_memberships SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+        const updatedMem: any = await safeD1First(env.DB.prepare('SELECT * FROM course_memberships WHERE id = ?').bind(memberId));
+        return new Response(JSON.stringify({ success: true, member: updatedMem }), { status: 200, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.5 Experiments 集合操作 (GET: 查詢, POST: 建立)
     if (path === 'experiments') {
       const sessionUser = await getSessionUser(request, env);
       if (!sessionUser) {
@@ -1019,67 +1439,413 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ success: true, experiments: [] }), { headers });
       }
 
-      const repo = url.searchParams.get('repo');
-      if (repo) {
-        const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo });
-        if (!perm.allowed || !perm.experiment) {
-          // 對未授權資源回傳 404，避免洩漏其他組別實驗的存在性
-          return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
+      if (request.method === 'POST') {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
         }
-        return new Response(
-          JSON.stringify({
-            success: true,
-            experiment: perm.experiment,
-            course: perm.course,
-            role: perm.role,
-            report_mode: perm.report_mode,
-          }),
-          { headers }
+
+        const course_id = String(body.course_id || '').trim();
+        const experiment_code = String(body.experiment_code || '').trim();
+        const name = String(body.name || '').trim();
+        const repository = String(body.repository || '').trim();
+        const report_mode = body.report_mode || 'shared';
+
+        if (!course_id || !experiment_code || !name || !repository) {
+          return new Response(JSON.stringify({ error: 'course_id, experiment_code, name, and repository are required' }), { status: 400, headers });
+        }
+
+        if (!['shared', 'separate'].includes(report_mode)) {
+          return new Response(JSON.stringify({ error: 'Invalid report_mode: must be shared or separate' }), { status: 400, headers });
+        }
+
+        // 檢查課程存在性與狀態
+        const course: any = await safeD1First(env.DB.prepare('SELECT id, status FROM courses WHERE id = ?').bind(course_id));
+        if (!course) {
+          return new Response(JSON.stringify({ error: 'Course not found' }), { status: 400, headers });
+        }
+        if (course.status !== 'active') {
+          return new Response(JSON.stringify({ error: `Cannot create experiment in a ${course.status} course` }), { status: 400, headers });
+        }
+
+        // 檢查建立者是否為該課程 Teacher
+        const isTeacher = await isCourseTeacher(env, course_id, sessionUser.github_id);
+        if (!isTeacher) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can create experiments' }), { status: 403, headers });
+        }
+
+        // 檢查 repository 格式
+        if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository)) {
+          return new Response(JSON.stringify({ error: 'Invalid repository format: must be owner/repo' }), { status: 400, headers });
+        }
+
+        // 檢查 repository 唯一性約束 (UNIQUE)
+        const existingRepo: any = await safeD1First(
+          env.DB.prepare('SELECT id FROM experiments WHERE repository = ?').bind(repository)
         );
-      }
-
-      const courseId = url.searchParams.get('course_id');
-      if (!courseId) {
-        return new Response(JSON.stringify({ error: 'Missing required query parameter: course_id or repo' }), { status: 400, headers });
-      }
-
-      // 檢查使用者在該課程的角色
-      const courseMem: any = await env.DB.prepare(
-        'SELECT role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
-      ).bind(courseId, sessionUser.github_id).first();
-
-      let isTeacherOrTa = courseMem && (courseMem.role === 'teacher' || courseMem.role === 'assistant');
-
-      if (!isTeacherOrTa && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
-        const tcRow: any = await env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher"').first();
-        if (tcRow && tcRow.count === 0) {
-          isTeacherOrTa = true;
+        if (existingRepo) {
+          return new Response(JSON.stringify({ error: 'Conflict: Repository is already registered for another experiment' }), { status: 409, headers });
         }
+
+        // 檢查 UNIQUE(course_id, experiment_code)
+        const existingCode: any = await safeD1First(
+          env.DB.prepare('SELECT id FROM experiments WHERE course_id = ? AND experiment_code = ?').bind(course_id, experiment_code)
+        );
+        if (existingCode) {
+          return new Response(JSON.stringify({ error: 'Conflict: Experiment code already exists in this course' }), { status: 409, headers });
+        }
+
+        const expId = `exp_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+        const now = new Date().toISOString();
+
+        try {
+          await env.DB.prepare(
+            `INSERT INTO experiments (
+              id, course_id, experiment_code, name, repository, report_mode, config_version, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(expId, course_id, experiment_code, name, repository, report_mode, '1.0', 'not_started', now, now).run();
+        } catch (dbErr: any) {
+          const errMsg = String(dbErr?.message || dbErr);
+          if (errMsg.includes('UNIQUE constraint failed')) {
+            return new Response(JSON.stringify({ error: 'Conflict: Repository or experiment_code already exists' }), { status: 409, headers });
+          }
+          throw dbErr;
+        }
+
+        const createdExp: any = await safeD1First(env.DB.prepare('SELECT * FROM experiments WHERE id = ?').bind(expId));
+        return new Response(JSON.stringify({ success: true, experiment: createdExp }), { status: 201, headers });
       }
 
-      let expList: any[] = [];
-      if (isTeacherOrTa) {
-        const res: any = await env.DB.prepare(
-          'SELECT * FROM experiments WHERE course_id = ? ORDER BY experiment_code ASC'
-        ).bind(courseId).all();
-        expList = res.results || [];
-      } else if (courseMem && courseMem.role === 'student') {
-        // 學生僅能看到自己有被分配組別 (experiment_memberships) 的實驗
-        const res: any = await env.DB.prepare(
-          `SELECT e.*, em.group_name
-           FROM experiments e
-           JOIN experiment_memberships em ON e.id = em.experiment_id
-           WHERE e.course_id = ? AND em.github_id = ? AND em.status = 'active'
-           ORDER BY e.experiment_code ASC`
-        ).bind(courseId, sessionUser.github_id).all();
-        expList = res.results || [];
-      } else {
-        return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
+      if (request.method === 'GET') {
+        const repo = url.searchParams.get('repo');
+        if (repo) {
+          const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo });
+          if (!perm.allowed || !perm.experiment) {
+            return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
+          }
+          return new Response(
+            JSON.stringify({
+              success: true,
+              experiment: perm.experiment,
+              course: perm.course,
+              role: perm.role,
+              report_mode: perm.report_mode,
+            }),
+            { headers }
+          );
+        }
+
+        const courseId = url.searchParams.get('course_id');
+        if (!courseId) {
+          return new Response(JSON.stringify({ error: 'Missing required query parameter: course_id or repo' }), { status: 400, headers });
+        }
+
+        const courseMem: any = await safeD1First(
+          env.DB.prepare('SELECT role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"').bind(courseId, sessionUser.github_id)
+        );
+
+        let isTeacherOrTa = courseMem && (courseMem.role === 'teacher' || courseMem.role === 'assistant');
+
+        if (!isTeacherOrTa && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
+          const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
+          if (tcRow && tcRow.count === 0) {
+            isTeacherOrTa = true;
+          }
+        }
+
+        // 檢查課程存在性與狀態 (inactive 課程對學生隱藏 404)
+        const course: any = await safeD1First(env.DB.prepare('SELECT id, status FROM courses WHERE id = ?').bind(courseId));
+        if (!course || (course.status === 'inactive' && !isTeacherOrTa)) {
+          return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
+        }
+
+        let expList: any[] = [];
+        if (isTeacherOrTa) {
+          const res: any = await env.DB.prepare(
+            'SELECT * FROM experiments WHERE course_id = ? ORDER BY experiment_code ASC'
+          ).bind(courseId).all();
+          expList = res.results || [];
+        } else if (courseMem && courseMem.role === 'student') {
+          const res: any = await env.DB.prepare(
+            `SELECT e.*, em.group_name
+             FROM experiments e
+             JOIN experiment_memberships em ON e.id = em.experiment_id
+             WHERE e.course_id = ? AND em.github_id = ? AND em.status = 'active'
+             ORDER BY e.experiment_code ASC`
+          ).bind(courseId, sessionUser.github_id).all();
+          expList = res.results || [];
+        } else {
+          return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
+        }
+
+        return new Response(JSON.stringify({ success: true, experiments: expList }), { headers });
       }
 
-      return new Response(JSON.stringify({ success: true, experiments: expList }), { headers });
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
     }
 
+    // 4.6 單一 Experiment 詳情與修改 (GET /api/experiments/:id, PATCH /api/experiments/:id)
+    const expItemMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)$/);
+    if (expItemMatch) {
+      const expId = expItemMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT * FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      if (!perm.allowed) {
+        return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
+      }
+
+      if (request.method === 'GET') {
+        return new Response(JSON.stringify({
+          success: true,
+          experiment: exp,
+          course: perm.course,
+          role: perm.role,
+          report_mode: perm.report_mode,
+        }), { status: 200, headers });
+      }
+
+      if (request.method === 'PATCH') {
+        if (perm.role !== 'teacher') {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only teachers can update experiment' }), { status: 403, headers });
+        }
+
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        const updates: string[] = [];
+        const binds: any[] = [];
+
+        if (body.name !== undefined) {
+          const n = String(body.name).trim();
+          if (!n) return new Response(JSON.stringify({ error: 'name cannot be empty' }), { status: 400, headers });
+          updates.push('name = ?');
+          binds.push(n);
+        }
+
+        if (body.report_mode !== undefined) {
+          if (!['shared', 'separate'].includes(body.report_mode)) {
+            return new Response(JSON.stringify({ error: 'Invalid report_mode: must be shared or separate' }), { status: 400, headers });
+          }
+          updates.push('report_mode = ?');
+          binds.push(body.report_mode);
+        }
+
+        if (body.status !== undefined) {
+          if (!['not_started', 'in_progress', 'data_processing', 'report_writing', 'completed'].includes(body.status)) {
+            return new Response(JSON.stringify({ error: 'Invalid status' }), { status: 400, headers });
+          }
+          updates.push('status = ?');
+          binds.push(body.status);
+        }
+
+        if (updates.length === 0) {
+          return new Response(JSON.stringify({ error: 'No valid fields provided for update' }), { status: 400, headers });
+        }
+
+        const now = new Date().toISOString();
+        updates.push('updated_at = ?');
+        binds.push(now);
+        binds.push(expId);
+
+        await env.DB.prepare(`UPDATE experiments SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+        const updatedExp: any = await safeD1First(env.DB.prepare('SELECT * FROM experiments WHERE id = ?').bind(expId));
+        return new Response(JSON.stringify({ success: true, experiment: updatedExp }), { status: 200, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.7 實驗成員配置管理 (GET /api/experiments/:id/members, POST /api/experiments/:id/members)
+    const expMembersMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/members$/);
+    if (expMembersMatch) {
+      const expId = expMembersMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT id, course_id, repository FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      if (request.method === 'GET') {
+        const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+        if (!perm.allowed) {
+          return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
+        }
+
+        const res: any = await env.DB.prepare(
+          'SELECT id, experiment_id, github_id, username, role, group_name, status, created_at, updated_at FROM experiment_memberships WHERE experiment_id = ? AND status = "active"'
+        ).bind(expId).all();
+
+        return new Response(JSON.stringify({ success: true, experiment_members: res.results || [] }), { headers });
+      }
+
+      if (request.method === 'POST') {
+        const isTeacher = await isCourseTeacher(env, exp.course_id, sessionUser.github_id);
+        if (!isTeacher) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can assign members to experiments' }), { status: 403, headers });
+        }
+
+        const expCourse: any = await safeD1First(env.DB.prepare('SELECT status FROM courses WHERE id = ?').bind(exp.course_id));
+        if (expCourse && expCourse.status !== 'active') {
+          return new Response(JSON.stringify({ error: `Cannot assign members in a ${expCourse.status} course` }), { status: 400, headers });
+        }
+
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        const github_id = String(body.github_id || '').trim();
+        const username = String(body.username || '').trim();
+        const role = String(body.role || 'student').trim();
+        const group_name = body.group_name !== undefined ? String(body.group_name).trim() : null;
+
+        if (!github_id || !username) {
+          return new Response(JSON.stringify({ error: 'github_id and username are required' }), { status: 400, headers });
+        }
+
+        if (!['student', 'assistant'].includes(role)) {
+          return new Response(JSON.stringify({ error: 'Invalid role: must be student or assistant' }), { status: 400, headers });
+        }
+
+        // 前置條件校驗：該被分配之使用者必須已是該課程 (Course) 的 active 成員！
+        const courseMem: any = await safeD1First(
+          env.DB.prepare('SELECT id, role FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"').bind(exp.course_id, github_id)
+        );
+        if (!courseMem) {
+          return new Response(JSON.stringify({ error: 'Bad Request: Target user is not enrolled as an active member of the course' }), { status: 400, headers });
+        }
+
+        // 檢查 UNIQUE(experiment_id, github_id)
+        const existingMem: any = await safeD1First(
+          env.DB.prepare('SELECT id, status FROM experiment_memberships WHERE experiment_id = ? AND github_id = ?').bind(expId, github_id)
+        );
+        if (existingMem) {
+          if (existingMem.status === 'active') {
+            return new Response(JSON.stringify({ error: 'Conflict: User is already an active member of this experiment' }), { status: 409, headers });
+          }
+          const now = new Date().toISOString();
+          await env.DB.prepare(
+            'UPDATE experiment_memberships SET role = ?, group_name = ?, status = "active", updated_at = ? WHERE id = ?'
+          ).bind(role, group_name, now, existingMem.id).run();
+          const reactivated: any = await safeD1First(env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ?').bind(existingMem.id));
+          return new Response(JSON.stringify({ success: true, member: reactivated }), { status: 200, headers });
+        }
+
+        const emId = `em_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          `INSERT INTO experiment_memberships (id, experiment_id, github_id, username, role, group_name, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(emId, expId, github_id, username, role, group_name, 'active', now, now).run();
+
+        const createdExpMem: any = await safeD1First(env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ?').bind(emId));
+        return new Response(JSON.stringify({ success: true, member: createdExpMem }), { status: 201, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.8 單一實驗成員修改與停用 (PATCH /api/experiments/:id/members/:memberId)
+    // 依據架構規範：不提供 DELETE 端點，一律透過 PATCH 更新 status='inactive'；DELETE 請求回傳 405
+    const expMemberItemMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/members\/([a-zA-Z0-9_-]+)$/);
+    if (expMemberItemMatch) {
+      const expId = expMemberItemMatch[1];
+      const memberId = expMemberItemMatch[2];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT course_id FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const isTeacher = await isCourseTeacher(env, exp.course_id, sessionUser.github_id);
+      if (!isTeacher) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can manage experiment members' }), { status: 403, headers });
+      }
+
+      // IDOR 防護：嚴格限定 memberId 與 expId 匹配，不匹配或不存在一律 404
+      const targetMem: any = await safeD1First(
+        env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ? AND experiment_id = ?').bind(memberId, expId)
+      );
+      if (!targetMem) {
+        return new Response(JSON.stringify({ error: 'Experiment member not found' }), { status: 404, headers });
+      }
+
+      if (request.method === 'PATCH') {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        const updates: string[] = [];
+        const binds: any[] = [];
+
+        if (body.group_name !== undefined) {
+          updates.push('group_name = ?');
+          binds.push(body.group_name ? String(body.group_name).trim() : null);
+        }
+
+        if (body.role !== undefined) {
+          if (!['student', 'assistant'].includes(body.role)) {
+            return new Response(JSON.stringify({ error: 'Invalid role' }), { status: 400, headers });
+          }
+          updates.push('role = ?');
+          binds.push(body.role);
+        }
+
+        if (body.status !== undefined) {
+          if (!['active', 'inactive'].includes(body.status)) {
+            return new Response(JSON.stringify({ error: 'Invalid status' }), { status: 400, headers });
+          }
+          updates.push('status = ?');
+          binds.push(body.status);
+        }
+
+        if (updates.length === 0) {
+          return new Response(JSON.stringify({ error: 'No valid fields provided for update' }), { status: 400, headers });
+        }
+
+        const now = new Date().toISOString();
+        updates.push('updated_at = ?');
+        binds.push(now);
+        binds.push(memberId);
+
+        await env.DB.prepare(`UPDATE experiment_memberships SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+        const updatedMem: any = await safeD1First(env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ?').bind(memberId));
+        return new Response(JSON.stringify({ success: true, member: updatedMem }), { status: 200, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.9 舊版 /api/members 相容查詢端點
     if (path === 'members') {
       const sessionUser = await getSessionUser(request, env);
       if (!sessionUser) {
@@ -1105,13 +1871,13 @@ export const onRequest = async (context: any) => {
       }
 
       if (courseId) {
-        const courseMem: any = await env.DB.prepare(
+        const courseMem: any = await safeD1First(env.DB.prepare(
           'SELECT role FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
-        ).bind(courseId, sessionUser.github_id).first();
+        ).bind(courseId, sessionUser.github_id));
 
         let canViewCourse = !!courseMem;
         if (!canViewCourse && env.INITIAL_ADMIN_GITHUB_ID && sessionUser.github_id === env.INITIAL_ADMIN_GITHUB_ID) {
-          const tcRow: any = await env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher"').first();
+          const tcRow: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE role = "teacher" AND status = "active"'));
           if (tcRow && tcRow.count === 0) canViewCourse = true;
         }
 
@@ -1125,7 +1891,7 @@ export const onRequest = async (context: any) => {
       }
 
       if (experimentId) {
-        const expRow: any = await env.DB.prepare('SELECT id, course_id, repository FROM experiments WHERE id = ?').bind(experimentId).first();
+        const expRow: any = await safeD1First(env.DB.prepare('SELECT id, course_id, repository FROM experiments WHERE id = ?').bind(experimentId));
         if (!expRow) {
           return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
         }

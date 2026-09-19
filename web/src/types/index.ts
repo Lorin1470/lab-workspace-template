@@ -82,9 +82,61 @@ export interface Course {
   course_code: string;
   name: string;
   semester: string;
+  status: 'active' | 'archived' | 'inactive';
   created_by_github_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CreateCourseRequest {
+  course_code: string;
+  name: string;
+  semester: string;
+}
+
+export interface UpdateCourseRequest {
+  name?: string;
+  semester?: string;
+  status?: 'active' | 'archived' | 'inactive';
+}
+
+export interface CreateExperimentRequest {
+  course_id: string;
+  experiment_code: string;
+  name: string;
+  repository: string;
+  report_mode?: ReportMode;
+}
+
+export interface UpdateExperimentRequest {
+  name?: string;
+  report_mode?: ReportMode;
+  status?: ExperimentStatus;
+}
+
+export interface AddCourseMemberRequest {
+  github_id: string;
+  username: string;
+  role: 'teacher' | 'assistant' | 'student';
+}
+
+export interface UpdateCourseMemberRequest {
+  role?: 'teacher' | 'assistant' | 'student';
+  status?: 'active' | 'inactive' | 'suspended';
+  username?: string;
+}
+
+export interface AddExperimentMemberRequest {
+  github_id: string;
+  username: string;
+  role: 'student' | 'assistant';
+  group_name?: string;
+}
+
+export interface UpdateExperimentMemberRequest {
+  group_name?: string;
+  status?: 'active' | 'inactive';
+  role?: 'student' | 'assistant';
 }
 
 export interface Experiment {

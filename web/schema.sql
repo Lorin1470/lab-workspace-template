@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS courses (
     course_code TEXT NOT NULL,                 -- 課程代號 (例如 "EE201")
     name TEXT NOT NULL,                        -- 課程全名 (例如 "電子學實驗")
     semester TEXT NOT NULL,                    -- 學期 (例如 "114-1")
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived', 'inactive')), -- 課程狀態
     created_by_github_id TEXT,                 -- 建立者 GitHub ID (不代表權限)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
