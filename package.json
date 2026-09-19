@@ -15,6 +15,7 @@
     "test:frontend": "node scripts/verify-frontend.mjs",
     "test:provisioning": "node scripts/verify-provisioning.mjs",
     "test:workspace": "node scripts/verify-workspace.mjs",
+    "test:workspace-api": "node scripts/verify-workspace-api.mjs",
     "test:prod": "node scripts/smoke-test-prod.mjs",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build"

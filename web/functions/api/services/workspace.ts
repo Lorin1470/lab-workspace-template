@@ -56,11 +56,13 @@ export interface WorkspaceWriteResult {
   commit_sha: string;
   commit_message: string;
   content_sha: string;
+  action?: 'created' | 'modified';
 }
 
 export interface WorkspaceServiceOptions {
   sha?: string;
   isBase64?: boolean;
+  allowRawSanctuary?: boolean;
 }
 
 export interface WorkspaceSessionUser {
@@ -501,9 +503,31 @@ export async function createOrUpdateFile(
   const repoInfo = await getWorkspaceRepository(env, experimentId, sessionUser);
   const normPath = validateWorkspacePath(filePath, { allowEmpty: false });
 
-  // 1. Raw Data Sanctuary 聖域鐵律防護：嚴禁任何角色修改 raw/*
+  // 1. Raw Data Sanctuary 聖域鐵律防護
   if (isRawSanctuaryPath(normPath)) {
-    throw new WorkspaceError(403, 'Raw sanctuary violation: Modifications to raw/* are strictly forbidden');
+    if (!options?.allowRawSanctuary) {
+      throw new WorkspaceError(403, 'Raw sanctuary violation: Modifications to raw/* are strictly forbidden. Use dedicated /workspace/raw API.');
+    }
+    // 專用 Raw API 檢查：嚴禁覆寫既有 Raw 資料 (Strictly Immutable)
+    const token = await obtainInstallationToken(env, fetchFn);
+    const encodedPath = encodeRepoPathForUrl(normPath);
+    const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodedPath}`;
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'Lab-Workspace-System/1.0',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    const checkRes = await safeFetch(fetchFn, url, { method: 'GET', headers });
+    if (checkRes.ok) {
+      throw new WorkspaceError(409, `Conflict: Raw data file '${normPath}' already exists and cannot be overwritten (Raw Sanctuary Immutable rule)`);
+    } else if (checkRes.status !== 404) {
+      const errBody = await checkRes.json().catch(() => ({ message: checkRes.statusText }));
+      throw new WorkspaceError(
+        checkRes.status >= 500 ? 502 : checkRes.status,
+        `Failed to check raw sanctuary state: ${sanitizeErrorMessage(errBody.message || checkRes.statusText)}`
+      );
+    }
   }
 
   // 2. Separate Report 個人報告隔離防護
@@ -511,6 +535,7 @@ export async function createOrUpdateFile(
     if (sessionUser && sessionUser.github_id) {
       const isSelfReport =
         normPath === `report/${sessionUser.github_id}.md` ||
+        normPath === `report/report-${sessionUser.github_id}.md` ||
         normPath.startsWith(`report/${sessionUser.github_id}/`);
       if (!isSelfReport) {
         throw new WorkspaceError(
@@ -537,9 +562,9 @@ export async function createOrUpdateFile(
     'Content-Type': 'application/json',
   };
 
-  // 3. 取得目前檔案 SHA (若 options.sha 未顯式指定)
+  // 3. 取得目前檔案 SHA (若 options.sha 未顯式指定且非 raw sanctuary 建立)
   let targetSha = options?.sha;
-  if (!targetSha) {
+  if (!targetSha && !options?.allowRawSanctuary) {
     const checkRes = await safeFetch(fetchFn, url, { method: 'GET', headers });
     if (checkRes.ok) {
       const checkData: any = await checkRes.json();
@@ -574,7 +599,7 @@ export async function createOrUpdateFile(
 
   if (!putRes.ok) {
     const errBody = await putRes.json().catch(() => ({ message: putRes.statusText }));
-    if (putRes.status === 409) {
+    if (putRes.status === 409 || (putRes.status === 422 && (errBody?.message || '').toLowerCase().includes('sha'))) {
       throw new WorkspaceError(409, 'Conflict: SHA mismatch or parallel modification detected');
     }
     if (putRes.status === 401 || putRes.status === 403) {
@@ -595,6 +620,7 @@ export async function createOrUpdateFile(
   return {
     success: true,
     path: normPath,
+    action: putRes.status === 201 ? 'created' : 'modified',
     commit_sha: commitSha,
     commit_message: commitMessage.trim(),
     content_sha: putData?.content?.sha || '',
@@ -619,7 +645,29 @@ export async function createOrUpdateBinaryFile(
 
   // 1. Raw Data Sanctuary 聖域鐵律防護
   if (isRawSanctuaryPath(normPath)) {
-    throw new WorkspaceError(403, 'Raw sanctuary violation: Modifications to raw/* are strictly forbidden');
+    if (!options?.allowRawSanctuary) {
+      throw new WorkspaceError(403, 'Raw sanctuary violation: Modifications to raw/* are strictly forbidden. Use dedicated /workspace/raw API.');
+    }
+    // 專用 Raw API 檢查：嚴禁覆寫既有 Raw 資料 (Strictly Immutable)
+    const token = await obtainInstallationToken(env, fetchFn);
+    const encodedPath = encodeRepoPathForUrl(normPath);
+    const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodedPath}`;
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'Lab-Workspace-System/1.0',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    const checkRes = await safeFetch(fetchFn, url, { method: 'GET', headers });
+    if (checkRes.ok) {
+      throw new WorkspaceError(409, `Conflict: Raw data file '${normPath}' already exists and cannot be overwritten (Raw Sanctuary Immutable rule)`);
+    } else if (checkRes.status !== 404) {
+      const errBody = await checkRes.json().catch(() => ({ message: checkRes.statusText }));
+      throw new WorkspaceError(
+        checkRes.status >= 500 ? 502 : checkRes.status,
+        `Failed to check raw sanctuary state: ${sanitizeErrorMessage(errBody.message || checkRes.statusText)}`
+      );
+    }
   }
 
   // 2. Separate Report 個人報告隔離防護
@@ -627,6 +675,7 @@ export async function createOrUpdateBinaryFile(
     if (sessionUser && sessionUser.github_id) {
       const isSelfReport =
         normPath === `report/${sessionUser.github_id}.md` ||
+        normPath === `report/report-${sessionUser.github_id}.md` ||
         normPath.startsWith(`report/${sessionUser.github_id}/`);
       if (!isSelfReport) {
         throw new WorkspaceError(
@@ -675,9 +724,9 @@ export async function createOrUpdateBinaryFile(
     'Content-Type': 'application/json',
   };
 
-  // 4. 取得目前檔案 SHA (若 options.sha 未指定)
+  // 4. 取得目前檔案 SHA (若 options.sha 未指定且非 raw sanctuary 建立)
   let targetSha = options?.sha;
-  if (!targetSha) {
+  if (!targetSha && !options?.allowRawSanctuary) {
     const checkRes = await safeFetch(fetchFn, url, { method: 'GET', headers });
     if (checkRes.ok) {
       const checkData: any = await checkRes.json();
@@ -709,7 +758,7 @@ export async function createOrUpdateBinaryFile(
 
   if (!putRes.ok) {
     const errBody = await putRes.json().catch(() => ({ message: putRes.statusText }));
-    if (putRes.status === 409) {
+    if (putRes.status === 409 || (putRes.status === 422 && (errBody?.message || '').toLowerCase().includes('sha'))) {
       throw new WorkspaceError(409, 'Conflict: SHA mismatch or parallel modification detected');
     }
     if (putRes.status === 401 || putRes.status === 403) {
@@ -730,6 +779,7 @@ export async function createOrUpdateBinaryFile(
   return {
     success: true,
     path: normPath,
+    action: putRes.status === 201 ? 'created' : 'modified',
     commit_sha: commitSha,
     commit_message: commitMessage.trim(),
     content_sha: putData?.content?.sha || '',

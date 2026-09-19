@@ -7,6 +7,15 @@ import {
   provisionRepository,
   sanitizeErrorMessage,
 } from './services/provisioning.ts';
+import {
+  listFiles,
+  readFile,
+  createOrUpdateFile,
+  createOrUpdateBinaryFile,
+  validateWorkspacePath,
+  isRawSanctuaryPath as isWorkspaceRawSanctuaryPath,
+  WorkspaceError,
+} from './services/workspace.ts';
 
 interface Env {
   DB?: any;
@@ -368,7 +377,7 @@ export const onRequest = async (context: any) => {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
 
@@ -1967,7 +1976,526 @@ export const onRequest = async (context: any) => {
       return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
     }
 
-    // 4.10 舊版 /api/members 相容查詢端點
+    // 4.10 實驗工作區檔案樹讀取 (GET /api/experiments/:id/workspace/files?path=)
+    const expWsFilesMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/workspace\/files$/);
+    if (expWsFilesMatch) {
+      if (request.method !== 'GET') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+
+      const expId = expWsFilesMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT id, repository, course_id FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      if (!perm.allowed) {
+        return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), { status: 403, headers });
+      }
+
+      const dirPath = url.searchParams.get('path') || '';
+      try {
+        const items = await listFiles(env, expId, dirPath, sessionUser, env.FETCH || fetch);
+        return new Response(JSON.stringify({ items }), { status: 200, headers });
+      } catch (err: any) {
+        const status = err instanceof WorkspaceError ? err.status : (err.status || 500);
+        return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+      }
+    }
+
+    // 4.11 實驗工作區單一檔案讀取與寫入 (GET /api/experiments/:id/workspace/file, PUT /api/experiments/:id/workspace/file)
+    const expWsFileMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/workspace\/file$/);
+    if (expWsFileMatch) {
+      if (request.method !== 'GET' && request.method !== 'PUT') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+
+      const expId = expWsFileMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT id, experiment_code, repository, course_id, report_mode FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      if (!perm.allowed) {
+        return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), { status: 403, headers });
+      }
+
+      if (request.method === 'GET') {
+        const filePath = url.searchParams.get('path');
+        if (!filePath) {
+          return new Response(JSON.stringify({ error: 'Missing required query parameter: path' }), { status: 400, headers });
+        }
+        try {
+          const fileData = await readFile(env, expId, filePath, sessionUser, env.FETCH || fetch);
+          return new Response(JSON.stringify(fileData), { status: 200, headers });
+        } catch (err: any) {
+          const status = err instanceof WorkspaceError ? err.status : (err.status || 500);
+          return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+        }
+      }
+
+      if (request.method === 'PUT') {
+        let body: any;
+        try {
+          body = await request.json();
+        } catch {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        const { path: filePath, content, message, sha } = body || {};
+        if (!filePath || typeof filePath !== 'string') {
+          return new Response(JSON.stringify({ error: 'Missing required field: path' }), { status: 400, headers });
+        }
+        if (content === undefined || content === null || typeof content !== 'string') {
+          return new Response(JSON.stringify({ error: 'Missing required field: content (must be string)' }), { status: 400, headers });
+        }
+        if (!message || typeof message !== 'string' || !message.trim()) {
+          return new Response(JSON.stringify({ error: 'Missing required field: message' }), { status: 400, headers });
+        }
+
+        let normPath: string;
+        try {
+          normPath = validateWorkspacePath(filePath, { allowEmpty: false });
+        } catch (err: any) {
+          return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status: 400, headers });
+        }
+
+        // 鐵律防護：通用 File PUT 嚴格禁止寫入 raw/*
+        if (isWorkspaceRawSanctuaryPath(normPath)) {
+          return new Response(
+            JSON.stringify({ error: 'Raw sanctuary violation: Modifications to raw/* are strictly forbidden. Use dedicated /workspace/raw API.' }),
+            { status: 403, headers }
+          );
+        }
+
+        try {
+          const writeResult = await createOrUpdateFile(
+            env,
+            expId,
+            normPath,
+            content,
+            message.trim(),
+            sessionUser,
+            { sha: sha ? String(sha).trim() : undefined },
+            env.FETCH || fetch
+          );
+
+          const action = writeResult.action === 'created' ? 'file_created' : 'file_modified';
+          const nowIso = new Date().toISOString();
+          const logId = crypto.randomUUID();
+          try {
+            await env.DB.prepare(
+              `INSERT INTO activity_logs (
+                id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
+                actor_avatar, requested_by, approved_by, approval_status, action, target, summary, files_changed, commit_sha
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              logId,
+              exp.repository,
+              exp.experiment_code,
+              nowIso,
+              'web',
+              sessionUser.username,
+              sessionUser.display_name || sessionUser.username,
+              sessionUser.avatar_url || null,
+              sessionUser.username,
+              sessionUser.username,
+              'approved',
+              action,
+              normPath,
+              `${action === 'file_created' ? '建立檔案' : '更新檔案'}: ${normPath}`,
+              JSON.stringify([normPath]),
+              writeResult.commit_sha
+            ).run();
+          } catch (_logErr) {
+            console.error('Failed to write activity log:', _logErr);
+          }
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              path: normPath,
+              action: writeResult.action || (sha ? 'modified' : 'created'),
+              commit_sha: writeResult.commit_sha,
+              content_sha: writeResult.content_sha,
+            }),
+            { status: 200, headers }
+          );
+        } catch (err: any) {
+          const status = err instanceof WorkspaceError ? err.status : (err.status || 500);
+          return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+        }
+      }
+    }
+
+    // 4.12 實驗原始數據專用上傳端點 (POST /api/experiments/:id/workspace/raw)
+    const expWsRawMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/workspace\/raw$/);
+    if (expWsRawMatch) {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+
+      const expId = expWsRawMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT id, experiment_code, repository, course_id, report_mode FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      if (!perm.allowed) {
+        return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), { status: 403, headers });
+      }
+
+      let filePath = '';
+      let contentData: Uint8Array | ArrayBuffer | string = '';
+      let commitMessage = '';
+      let isBase64 = false;
+
+      const contentType = request.headers.get('Content-Type') || '';
+      if (contentType.includes('multipart/form-data')) {
+        let formData: FormData;
+        try {
+          formData = await request.formData();
+        } catch {
+          return new Response(JSON.stringify({ error: 'Invalid multipart form data' }), { status: 400, headers });
+        }
+        const file = formData.get('file');
+        filePath = String(formData.get('path') || (file && typeof file === 'object' && 'name' in file ? file.name : '') || '');
+        commitMessage = String(formData.get('message') || '').trim();
+
+        if (file && typeof file === 'object' && 'arrayBuffer' in file) {
+          contentData = await (file as Blob).arrayBuffer();
+        } else if (typeof file === 'string') {
+          contentData = file;
+        } else {
+          return new Response(JSON.stringify({ error: 'Missing required file in form data' }), { status: 400, headers });
+        }
+      } else {
+        let body: any;
+        try {
+          body = await request.json();
+        } catch {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+        filePath = String(body?.path || body?.filename || '');
+        commitMessage = String(body?.message || '').trim();
+        contentData = body?.content;
+        isBase64 = !!body?.isBase64;
+        if (contentData === undefined || contentData === null) {
+          return new Response(JSON.stringify({ error: 'Missing required field: content' }), { status: 400, headers });
+        }
+      }
+
+      if (!filePath.trim()) {
+        return new Response(JSON.stringify({ error: 'Missing required field: path or filename' }), { status: 400, headers });
+      }
+
+      let rawTarget = filePath.trim();
+      // 確保路徑必須落在 raw/ 下
+      if (!rawTarget.startsWith('raw/')) {
+        if (rawTarget === 'raw') {
+          return new Response(JSON.stringify({ error: 'Path must specify a file inside raw/' }), { status: 400, headers });
+        }
+        if (!rawTarget.includes('/')) {
+          rawTarget = `raw/${rawTarget}`;
+        } else {
+          return new Response(JSON.stringify({ error: 'Path must be located within raw/ directory' }), { status: 400, headers });
+        }
+      }
+
+      let normPath: string;
+      try {
+        normPath = validateWorkspacePath(rawTarget, { allowEmpty: false });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status: 400, headers });
+      }
+
+      if (!commitMessage) {
+        commitMessage = `upload: ${normPath}`;
+      }
+
+      try {
+        const writeResult = await createOrUpdateBinaryFile(
+          env,
+          expId,
+          normPath,
+          contentData,
+          commitMessage,
+          sessionUser,
+          { allowRawSanctuary: true, isBase64 },
+          env.FETCH || fetch
+        );
+
+        const nowIso = new Date().toISOString();
+        const logId = crypto.randomUUID();
+        try {
+          await env.DB.prepare(
+            `INSERT INTO activity_logs (
+              id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
+              actor_avatar, requested_by, approved_by, approval_status, action, target, summary, files_changed, commit_sha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            logId,
+            exp.repository,
+            exp.experiment_code,
+            nowIso,
+            'web',
+            sessionUser.username,
+            sessionUser.display_name || sessionUser.username,
+            sessionUser.avatar_url || null,
+            sessionUser.username,
+            sessionUser.username,
+            'approved',
+            'raw_uploaded',
+            normPath,
+            `上傳原始實驗數據: ${normPath}`,
+            JSON.stringify([normPath]),
+            writeResult.commit_sha
+          ).run();
+        } catch (_logErr) {
+          console.error('Failed to write activity log:', _logErr);
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            path: normPath,
+            action: 'raw_uploaded',
+            commit_sha: writeResult.commit_sha,
+            content_sha: writeResult.content_sha,
+          }),
+          { status: 201, headers }
+        );
+      } catch (err: any) {
+        const status = err instanceof WorkspaceError ? err.status : (err.status || 500);
+        return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+      }
+    }
+
+    // 4.13 實驗照片專用上傳端點 (POST /api/experiments/:id/workspace/photos)
+    const expWsPhotosMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/workspace\/photos$/);
+    if (expWsPhotosMatch) {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+
+      const expId = expWsPhotosMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT id, experiment_code, repository, course_id FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      if (!perm.allowed) {
+        return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), { status: 403, headers });
+      }
+
+      let filePath = '';
+      let contentData: Uint8Array | ArrayBuffer | string = '';
+      let commitMessage = '';
+      let isBase64 = false;
+      let mimeType = '';
+      let byteSize = 0;
+
+      const contentType = request.headers.get('Content-Type') || '';
+      if (contentType.includes('multipart/form-data')) {
+        let formData: FormData;
+        try {
+          formData = await request.formData();
+        } catch {
+          return new Response(JSON.stringify({ error: 'Invalid multipart form data' }), { status: 400, headers });
+        }
+        const file = formData.get('file');
+        filePath = String(formData.get('path') || (file && typeof file === 'object' && 'name' in file ? file.name : '') || '');
+        commitMessage = String(formData.get('message') || '').trim();
+
+        if (file && typeof file === 'object' && 'arrayBuffer' in file) {
+          const blob = file as Blob;
+          mimeType = blob.type;
+          byteSize = blob.size;
+          contentData = await blob.arrayBuffer();
+        } else if (typeof file === 'string') {
+          contentData = file;
+          byteSize = file.length;
+        } else {
+          return new Response(JSON.stringify({ error: 'Missing required file in form data' }), { status: 400, headers });
+        }
+      } else {
+        let body: any;
+        try {
+          body = await request.json();
+        } catch {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+        filePath = String(body?.path || body?.filename || '');
+        commitMessage = String(body?.message || '').trim();
+        contentData = body?.content;
+        isBase64 = body?.isBase64 !== false;
+        mimeType = String(body?.mime_type || body?.type || '');
+        if (contentData === undefined || contentData === null) {
+          return new Response(JSON.stringify({ error: 'Missing required field: content' }), { status: 400, headers });
+        }
+        if (typeof contentData === 'string') {
+          // 計算 bytes 大小 (Base64 或 raw string)
+          byteSize = isBase64 ? Math.floor((contentData.length * 3) / 4) : contentData.length;
+        }
+      }
+
+      if (!filePath.trim()) {
+        return new Response(JSON.stringify({ error: 'Missing required field: path or filename' }), { status: 400, headers });
+      }
+
+      let photoTarget = filePath.trim();
+      // 確保路徑必須落在 photos/ 下
+      if (!photoTarget.startsWith('photos/')) {
+        if (photoTarget === 'photos') {
+          return new Response(JSON.stringify({ error: 'Path must specify a file inside photos/' }), { status: 400, headers });
+        }
+        if (!photoTarget.includes('/')) {
+          photoTarget = `photos/${photoTarget}`;
+        } else {
+          return new Response(JSON.stringify({ error: 'Path must be located within photos/ directory' }), { status: 400, headers });
+        }
+      }
+
+      let normPath: string;
+      try {
+        normPath = validateWorkspacePath(photoTarget, { allowEmpty: false });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status: 400, headers });
+      }
+
+      // 檢查副檔名與 MIME 類型
+      const ext = normPath.split('.').pop()?.toLowerCase() || '';
+      const allowedExts = ['jpg', 'jpeg', 'png', 'webp'];
+      const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+
+      if (!allowedExts.includes(ext)) {
+        return new Response(
+          JSON.stringify({ error: `Invalid image extension: only .jpg, .jpeg, .png, .webp are allowed (got .${ext})` }),
+          { status: 400, headers }
+        );
+      }
+
+      // 推導或驗證 MIME
+      if (!mimeType) {
+        if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
+        else if (ext === 'png') mimeType = 'image/png';
+        else if (ext === 'webp') mimeType = 'image/webp';
+      }
+      if (!allowedMimes.includes(mimeType.toLowerCase())) {
+        return new Response(
+          JSON.stringify({ error: `Invalid image MIME type: only image/jpeg, image/png, image/webp are allowed (got ${mimeType})` }),
+          { status: 400, headers }
+        );
+      }
+
+      // 單檔大小限制：5MB (5 * 1024 * 1024 bytes)
+      const MAX_PHOTO_SIZE = 5 * 1024 * 1024;
+      if (byteSize > MAX_PHOTO_SIZE) {
+        return new Response(
+          JSON.stringify({ error: `Payload too large: Photo size exceeds 5MB limit (${byteSize} bytes)` }),
+          { status: 413, headers }
+        );
+      }
+
+      if (!commitMessage) {
+        commitMessage = `upload: ${normPath}`;
+      }
+
+      try {
+        const writeResult = await createOrUpdateBinaryFile(
+          env,
+          expId,
+          normPath,
+          contentData,
+          commitMessage,
+          sessionUser,
+          { isBase64 },
+          env.FETCH || fetch
+        );
+
+        const nowIso = new Date().toISOString();
+        const logId = crypto.randomUUID();
+        try {
+          await env.DB.prepare(
+            `INSERT INTO activity_logs (
+              id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
+              actor_avatar, requested_by, approved_by, approval_status, action, target, summary, files_changed, commit_sha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            logId,
+            exp.repository,
+            exp.experiment_code,
+            nowIso,
+            'web',
+            sessionUser.username,
+            sessionUser.display_name || sessionUser.username,
+            sessionUser.avatar_url || null,
+            sessionUser.username,
+            sessionUser.username,
+            'approved',
+            'photo_uploaded',
+            normPath,
+            `上傳實驗照片: ${normPath}`,
+            JSON.stringify([normPath]),
+            writeResult.commit_sha
+          ).run();
+        } catch (_logErr) {
+          console.error('Failed to write activity log:', _logErr);
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            path: normPath,
+            action: 'photo_uploaded',
+            commit_sha: writeResult.commit_sha,
+            content_sha: writeResult.content_sha,
+          }),
+          { status: 201, headers }
+        );
+      } catch (err: any) {
+        const status = err instanceof WorkspaceError ? err.status : (err.status || 500);
+        return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+      }
+    }
+
+    // 4.14 舊版 /api/members 相容查詢端點
     if (path === 'members') {
       const sessionUser = await getSessionUser(request, env);
       if (!sessionUser) {
