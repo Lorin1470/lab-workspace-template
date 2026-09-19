@@ -649,9 +649,107 @@ async function runAllTests() {
       assert.strictEqual(res.status, 403);
       pass("9. Agent 無法繞過 Raw Sanctuary 寫入");
     }
+    {
+      const res = await api("/experiments/exp-01/agent/task", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: { prompt: "請根據目前 Workspace 資料更新報告；若照片尚未上傳，請提醒我" },
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.data.task.intent, "report_update");
+      assert.strictEqual(res.data.task.confirmation_required, true);
+      assert.ok(res.data.task.changes[0].path.startsWith("report/"));
+      pass("10. 自然語言 Agent task 讀取 context 並產生報告變更提案");
+    }
+    let taskProposal;
+    {
+      const proposal = await api("/experiments/exp-01/agent/task", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: { prompt: "請根據目前 Workspace 資料更新報告；若照片尚未上傳，請提醒我" },
+      });
+      assert.strictEqual(proposal.status, 200);
+      taskProposal = proposal.data.task;
+      const res = await api("/experiments/exp-01/agent/task/execute", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: {
+          prompt: "請根據目前 Workspace 資料更新報告；若照片尚未上傳，請提醒我",
+          plan_hash: taskProposal.plan_hash,
+        },
+      });
+      assert.strictEqual(res.status, 400);
+      assert.match(res.data.error, /Explicit confirmation/);
+      pass("11. Agent task 未確認時不產生 GitHub write");
+    }
+    {
+      const res = await api("/experiments/exp-01/agent/task/execute", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: {
+          prompt: "請根據目前 Workspace 資料更新報告；若照片尚未上傳，請提醒我",
+          plan_hash: "stale-plan-hash",
+          confirmed: true,
+        },
+      });
+      assert.strictEqual(res.status, 409);
+      assert.strictEqual(res.data.code, "TASK_PROPOSAL_STALE");
+      pass("12. Agent task proposal hash 不一致時拒絕寫入");
+    }
+    {
+      const res = await api("/experiments/exp-01/agent/task/execute", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: {
+          prompt: "請根據目前 Workspace 資料更新報告；若照片尚未上傳，請提醒我",
+          plan_hash: taskProposal.plan_hash,
+          confirmed: true,
+        },
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.data.success, true);
+      assert.strictEqual(res.data.intent, "report_update");
+      assert.ok(res.data.commit_sha && res.data.commit_sha.length === 40);
+      pass("13. Agent task 明確確認後透過 Workspace Service 產生真實格式 commit_sha");
+    }
+    {
+      const res = await api("/experiments/exp-01/agent/task", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: { prompt: "請幫我做一件不支援的事情" },
+      });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.data.supported_intent, "report_update");
+      pass("14. Agent task 對未支援意圖明確拒絕，不假裝完成");
+    }
+    {
+      const res = await api("/experiments/exp-01/agent/task", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: { prompt: "幫我看看這次實驗還缺哪些資料" },
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.data.task.intent, "workspace_review");
+      assert.strictEqual(res.data.task.read_only, true);
+      assert.deepStrictEqual(res.data.task.changes, []);
+      assert.strictEqual(res.data.task.confirmation_required, false);
+      pass("15. Agent task 可唯讀檢查 Workspace 完成度且不產生變更");
+    }
+    {
+      const res = await api("/experiments/exp-01/agent/task", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: { prompt: "幫我整理剛才上傳的照片" },
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.data.task.intent, "photo_review");
+      assert.strictEqual(res.data.task.read_only, true);
+      assert.deepStrictEqual(res.data.task.changes, []);
+      pass("16. Agent task 只能唯讀檢視照片，不假設可直接操作本機 Desktop");
+    }
 
     // ----------------------------------------------------
-    // 群組 2: Authorization 授權邊界 (測試 10-12)
+    // 群組 2: Authorization 授權邊界 (測試 17-19)
     // ----------------------------------------------------
     console.log("\n▶ [群組 2: Authorization 協作者授權邊界 (403 vs 200)]");
 

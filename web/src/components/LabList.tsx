@@ -102,7 +102,7 @@ export const LabList: React.FC<LabListProps> = ({
                 </h3>
 
                 <p className="text-xs text-slate-400 font-mono mt-1">
-                  {exp.repository || `example-org/${exp.course_id.toLowerCase()}-${exp.experiment_id}`}
+                  {exp.repository || 'GitHub Workspace 尚未綁定'}
                 </p>
 
                 <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">

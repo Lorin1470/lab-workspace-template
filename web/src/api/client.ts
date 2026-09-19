@@ -246,6 +246,32 @@ export const api = {
         }
       );
     },
+    proposeTask: async (experimentId: string, prompt: string): Promise<any> => {
+      const data = await request<{ success: boolean; task: any }>(
+        `/api/experiments/${encodeURIComponent(experimentId)}/agent/task`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ prompt }),
+        }
+      );
+      return data.task;
+    },
+    executeTask: async (experimentId: string, prompt: string, planHash: string): Promise<{
+      success: boolean;
+      task_id: string;
+      intent: string;
+      path: string;
+      commit_sha: string;
+      content_sha: string;
+    }> => {
+      return request(
+        `/api/experiments/${encodeURIComponent(experimentId)}/agent/task/execute`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ prompt, plan_hash: planHash, confirmed: true }),
+        }
+      );
+    },
   },
 
   // 實驗成員管理 (Experiment Memberships)

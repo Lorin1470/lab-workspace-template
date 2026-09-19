@@ -377,7 +377,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
         {course.status === 'inactive' && (
           <div className="mt-4 bg-slate-100 border border-slate-300 rounded-lg p-3 text-xs text-slate-700 flex items-center space-x-2">
             <EyeOff className="w-4 h-4 text-slate-500 shrink-0" />
-            <span>此課程已停用，目前處於隱藏模式，一般學生無法查看此課程或其所屬實驗。</span>
+            <span>此課程已停用，目前處於隱藏模式，未加入的成員無法查看此課程或其所屬實驗。</span>
           </div>
         )}
 
@@ -553,21 +553,9 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                         </td>
                         <td className="px-5 py-3.5 font-mono text-xs text-slate-500">{m.github_id}</td>
                         <td className="px-5 py-3.5">
-                          {m.role === 'teacher' && (
-                            <span className="px-2 py-0.5 rounded text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
-                              教師 (Teacher)
-                            </span>
-                          )}
-                          {m.role === 'assistant' && (
-                            <span className="px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-                              助教 (Assistant)
-                            </span>
-                          )}
-                          {m.role === 'student' && (
-                            <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                              學生 (Student)
-                            </span>
-                          )}
+                          <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                            協作者
+                          </span>
                         </td>
                         <td className="px-5 py-3.5">
                           {m.status === 'active' && (
@@ -844,16 +832,10 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">課程角色</label>
-                <select
-                  value={newMemberRole}
-                  onChange={(e) => setNewMemberRole(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                >
-                  <option value="student">學生 (Student)</option>
-                  <option value="assistant">助教 (Assistant)</option>
-                  <option value="teacher">教師 (Teacher)</option>
-                </select>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">協作者權限</label>
+                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  所有加入課程的成員均為平等協作者。
+                </p>
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
@@ -883,7 +865,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
           <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-lg font-bold text-slate-900">
-                管理成員權限：@{editingMember.username}
+                管理協作者狀態：@{editingMember.username}
               </h3>
               <button onClick={() => setEditingMember(null)} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
@@ -897,16 +879,10 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
 
             <form onSubmit={handleUpdateMember} className="space-y-4 text-sm">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">課程角色</label>
-                <select
-                  value={editMemberRole}
-                  onChange={(e) => setEditMemberRole(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                >
-                  <option value="student">學生 (Student)</option>
-                  <option value="assistant">助教 (Assistant)</option>
-                  <option value="teacher">教師 (Teacher)</option>
-                </select>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">協作者權限</label>
+                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  所有協作者使用相同的 Workspace 操作權限。
+                </p>
               </div>
 
               <div>
@@ -921,7 +897,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   <option value="suspended">停權 (Suspended)</option>
                 </select>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  設定該成員在此課程工作區之角色與狀態。
+                  只調整此協作者是否仍可存取課程工作區。
                 </p>
               </div>
 

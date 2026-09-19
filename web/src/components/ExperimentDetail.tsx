@@ -94,7 +94,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   const [activeTab, setActiveTab] = useState<TabType>('activity');
   const [members, setMembers] = useState<ExperimentMembership[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
-  const [isMockActivity, setIsMockActivity] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
   const [membersLoading, setMembersLoading] = useState(false);
   const [activityLimit, setActivityLimit] = useState(50);
@@ -138,6 +137,11 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   const [agentConfirmed, setAgentConfirmed] = useState(false);
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
+  const [taskPrompt, setTaskPrompt] = useState('');
+  const [taskPlan, setTaskPlan] = useState<any | null>(null);
+  const [taskConfirmed, setTaskConfirmed] = useState(false);
+  const [taskLoading, setTaskLoading] = useState(false);
+  const [taskStatus, setTaskStatus] = useState<string | null>(null);
 
   // Provisioning 狀態與歷程控制
   const [isProvisioning, setIsProvisioning] = useState(false);
@@ -200,6 +204,41 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     }
   };
 
+  const proposeAgentTask = async () => {
+    if (!taskPrompt.trim()) return;
+    setTaskLoading(true);
+    setTaskStatus(null);
+    setTaskPlan(null);
+    setTaskConfirmed(false);
+    try {
+      setTaskPlan(await api.agent.proposeTask(experiment.id, taskPrompt.trim()));
+      setTaskStatus('已產生提案；請審閱變更內容後再確認執行。');
+    } catch (err: any) {
+      setTaskStatus(err instanceof ApiError ? err.message : 'Agent 任務提案失敗');
+    } finally {
+      setTaskLoading(false);
+    }
+  };
+
+  const executeAgentTask = async () => {
+    if (!taskPlan || !taskConfirmed) {
+      setTaskStatus('請先審閱並確認 Agent 任務提案。');
+      return;
+    }
+    setTaskLoading(true);
+    setTaskStatus(null);
+    try {
+      const result = await api.agent.executeTask(experiment.id, taskPrompt.trim(), taskPlan.plan_hash);
+      setTaskConfirmed(false);
+      setTaskStatus(`Agent 任務已完成，GitHub commit：${result.commit_sha}`);
+      await loadActivityLogs();
+    } catch (err: any) {
+      setTaskStatus(err instanceof ApiError ? err.message : 'Agent 任務執行失敗');
+    } finally {
+      setTaskLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'agent') {
       void loadAgentContext();
@@ -225,7 +264,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     try {
       const data = await api.activity.list(experiment.repository, experiment.experiment_code, activityLimit);
       setActivityLogs(data.logs);
-      setIsMockActivity(data.mode === 'mock');
     } catch (err: any) {
       setActivityLogs([]);
       onError(err.message || '讀取活動日誌失敗');
@@ -366,33 +404,50 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     }
   };
 
-  // 打包下載功能 (純前端免後端負擔)
+  // 從真實 Workspace 讀取檔案後打包，禁止以示範內容冒充下載結果。
   const handleDownloadZip = async (type: 'all' | 'photos' | 'raw') => {
     const zip = new JSZip();
     const prefix = `${experiment.experiment_code}-${experiment.name}`;
+    try {
+      const collectFiles = async (path = ''): Promise<string[]> => {
+        const items = await api.workspace.listFiles(experiment.id, path || undefined);
+        const files: string[] = [];
+        for (const item of items) {
+          if (item.type === 'directory' || item.type === 'dir') {
+            files.push(...(await collectFiles(item.path)));
+          } else if (type === 'all' || item.path.startsWith(`${type}/`)) {
+            files.push(item.path);
+          }
+        }
+        return files;
+      };
 
-    if (type === 'all' || type === 'raw') {
-      const rawFolder = zip.folder('raw');
-      rawFolder?.file('measurements.csv', 'Vce(V),Ib(uA),Ic(mA)\n0.0,10,0.00\n1.0,10,1.02\n2.0,10,1.05\n');
-    }
-    if (type === 'all' || type === 'photos') {
-      const photoFolder = zip.folder('photos');
-      photoFolder?.file('readme.txt', '實驗量測照片存放區 (一律保存原始未壓縮影像)\n');
-    }
-    if (type === 'all') {
-      zip.file('config.yml', `experiment_id: "${experiment.experiment_code}"\nstatus: "${experiment.status}"\nreport_mode: "${experiment.report_mode}"\n`);
-      zip.file('README.md', `# ${experiment.name}\n\nGitHub Repository: ${experiment.repository}\n`);
-      const reportFolder = zip.folder('report');
-      reportFolder?.file('report.md', `# 實驗報告：${experiment.name}\n`);
-    }
+      const paths = await collectFiles();
+      if (paths.length === 0) {
+        onError(`Workspace 目前沒有可下載的${type === 'all' ? '檔案' : `${type}/ 檔案`}。`);
+        return;
+      }
 
-    const content = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(content);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${prefix}-${type}.zip`;
-    link.click();
-    URL.revokeObjectURL(url);
+      for (const path of paths) {
+        const file = await api.workspace.readFile(experiment.id, path);
+        if (file.content_base64) {
+          const bytes = Uint8Array.from(atob(file.content_base64), (char) => char.charCodeAt(0));
+          zip.file(path, bytes);
+        } else {
+          zip.file(path, file.content);
+        }
+      }
+
+      const content = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(content);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${prefix}-${type}.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      onError(err instanceof ApiError ? err.message : '無法從真實 Workspace 建立下載檔案。');
+    }
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -725,15 +780,9 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   <span className="text-xs text-slate-500 font-medium">
                     日誌規範：誰在何時以何種方式操作了什麼（Append-Only 唯讀稽核）
                   </span>
-                  {isMockActivity ? (
-                    <span className="text-[10px] font-mono bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-semibold border border-amber-200">
-                      示範模式
-                    </span>
-                  ) : (
-                    <span className="text-[10px] font-mono bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-semibold border border-blue-100">
-                      Cloudflare D1 持久化
-                    </span>
-                  )}
+                  <span className="text-[10px] font-mono bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-semibold border border-blue-100">
+                    Cloudflare D1 持久化
+                  </span>
                 </div>
                 <p className="text-[11px] text-slate-400">
                   所有寫入操作均已通過伺服器端 Session 防偽校驗與 Commit SHA 綁定保護。
@@ -932,7 +981,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                       <tr>
                         <th className="px-5 py-3">GitHub 使用者</th>
                         <th className="px-5 py-3">GitHub ID</th>
-                        <th className="px-5 py-3">實驗角色</th>
+                        <th className="px-5 py-3">協作者</th>
                         <th className="px-5 py-3">組別 (Group)</th>
                         <th className="px-5 py-3">狀態</th>
                         {isCollaborator && <th className="px-5 py-3 text-right">操作</th>}
@@ -953,15 +1002,9 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                             </td>
                             <td className="px-5 py-3.5 font-mono text-xs text-slate-500">{m.github_id}</td>
                             <td className="px-5 py-3.5">
-                              {m.role === 'assistant' ? (
-                                <span className="px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-                                  助教
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                  學生
-                                </span>
-                              )}
+                              <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                                協作者
+                              </span>
                             </td>
                             <td className="px-5 py-3.5 font-medium text-slate-700">
                               {m.group_name || <span className="text-slate-400 text-xs">未分組</span>}
@@ -1242,6 +1285,81 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               )}
             </div>
 
+            <div className="border border-purple-200 bg-purple-50 rounded-xl p-4 space-y-3">
+              <div>
+                <h3 className="font-bold text-purple-900">Agent Task Workflow</h3>
+                <p className="text-xs text-purple-800 mt-1">
+                  用自然語言提出報告更新、Workspace 完成度檢查或照片狀態檢視。系統會先讀取 context 並產生可審閱結果；未確認前不會寫入 GitHub。
+                </p>
+              </div>
+              <textarea
+                value={taskPrompt}
+                onChange={(e) => {
+                  setTaskPrompt(e.target.value);
+                  setTaskPlan(null);
+                  setTaskConfirmed(false);
+                }}
+                className="w-full min-h-24 border border-purple-200 rounded-lg px-3 py-2 text-sm"
+                placeholder="例如：幫我看看這次實驗還缺哪些資料，或根據目前 Workspace 資料更新報告。"
+              />
+              <button
+                onClick={proposeAgentTask}
+                disabled={taskLoading || !taskPrompt.trim()}
+                className="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold disabled:opacity-50"
+              >
+                {taskLoading ? '分析中…' : '分析任務並產生提案'}
+              </button>
+              {taskPlan && (
+                <div className="bg-white border border-purple-200 rounded-lg p-3 space-y-2 text-xs text-slate-700">
+                  <div>任務類型：<code>{taskPlan.intent}</code></div>
+                  {taskPlan.summary && <div className="font-semibold text-slate-800">{taskPlan.summary}</div>}
+                  <div>讀取：{taskPlan.reads.map((item: any) => item.path).join('、')}</div>
+                  {taskPlan.findings?.map((finding: string) => (
+                    <div key={finding} className="text-slate-700">• {finding}</div>
+                  ))}
+                  {taskPlan.warnings?.map((warning: string) => (
+                    <div key={warning} className="text-amber-700">⚠️ {warning}</div>
+                  ))}
+                  {taskPlan.changes.map((change: any) => (
+                    <div key={change.path} className="border-t border-slate-100 pt-2">
+                      <div className="font-semibold">{change.operation}：{change.path}</div>
+                      <div className="text-slate-500">{change.summary}</div>
+                      <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap bg-slate-50 rounded p-2">{change.content}</pre>
+                    </div>
+                  ))}
+                  {taskPlan.read_only ? (
+                    <div className="pt-2 font-semibold text-blue-700">
+                      此任務為唯讀檢查，不會修改 GitHub，也不需要確認或 commit。
+                    </div>
+                  ) : (
+                    <>
+                      <label className="flex items-start gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          checked={taskConfirmed}
+                          onChange={(e) => setTaskConfirmed(e.target.checked)}
+                          className="mt-0.5"
+                        />
+                        我已審閱上述 proposal，允許 Agent 依最新 SHA 建立真實 GitHub commit。
+                      </label>
+                      <button
+                        onClick={executeAgentTask}
+                        disabled={taskLoading || !taskConfirmed}
+                        className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-semibold disabled:opacity-50"
+                      >
+                        確認並執行任務
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              {taskStatus && (
+                <div className="rounded-lg bg-white border border-purple-200 p-3 text-xs text-slate-700">
+                  {taskStatus}
+                </div>
+              )}
+            </div>
+
             <div className="bg-purple-50 border border-purple-200 p-4 rounded-xl flex items-start space-x-3">
               <ShieldCheck className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
               <div className="text-sm text-purple-900">
@@ -1256,22 +1374,17 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               {[
                 {
                   id: 'p1',
-                  title: '📸 照片整理與分類',
-                  prompt: '請根據 .github/skills/experiment-report/SKILL.md 規範，檢查 photos/ 目錄中的量測照片，按實驗項目編號分類並加入說明。',
+                  title: '🔎 檢查 Workspace 完成度',
+                  prompt: '幫我看看這次實驗還缺哪些資料，並列出目前 Workspace 的缺口。',
                 },
                 {
                   id: 'p2',
-                  title: '🧹 原始數據清洗 (嚴禁竄改 raw/)',
-                  prompt: '請讀取 raw/measurements.csv，進行數據清洗與校正，輸出至 processed/measurements_clean.csv。注意切勿修改 raw/ 原檔！',
+                  title: '📸 檢視照片保存狀態',
+                  prompt: '幫我整理剛才上傳的照片，先檢查 photos/ 目前有哪些內容；不要修改或移動檔案。',
                 },
                 {
                   id: 'p3',
-                  title: '📊 繪製特性曲線圖',
-                  prompt: '請根據 processed/ 乾淨數據，撰寫 Python 腳本繪製特性曲線圖，輸出高解析度 SVG 圖檔至 analysis/。',
-                },
-                {
-                  id: 'p4',
-                  title: '📝 起草與完善實驗報告',
+                  title: '📝 根據 Workspace 更新報告',
                   prompt: '請根據 analysis/ 的曲線圖與 processed/ 的數據，在 report/report.md 中補充「實驗數據分析」與「問題與討論」章節。',
                 },
               ].map((item) => (
@@ -1430,15 +1543,10 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">實驗角色</label>
-                <select
-                  value={newMemberRole}
-                  onChange={(e) => setNewMemberRole(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                >
-                  <option value="student">學生 (Student)</option>
-                  <option value="assistant">助教 (Assistant)</option>
-                </select>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">協作者權限</label>
+                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  所有加入實驗的成員均使用相同的 Workspace 操作權限。
+                </p>
               </div>
 
               <div>
@@ -1507,15 +1615,10 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">角色</label>
-                <select
-                  value={editMemberRole}
-                  onChange={(e) => setEditMemberRole(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                >
-                  <option value="student">學生 (Student)</option>
-                  <option value="assistant">助教 (Assistant)</option>
-                </select>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">協作者權限</label>
+                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  成員之間沒有階級式權限差異。
+                </p>
               </div>
 
               <div>

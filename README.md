@@ -93,18 +93,18 @@ lab-XX-name/
 * **多課程支援**：一個 Web 平台集中管理電子學實驗、數位邏輯實驗等多門課程與各週實驗。
 * **主要功能**：
   - 📤 **快速上傳**：學生可在手機或電腦瀏覽器拖曳上傳照片至 `photos/` 或數據至 `raw/`。
-  - 📥 **打包下載**：一鍵下載全部照片包、原始數據包或完整專案 ZIP。
+  - 📥 **打包下載**：從目前 GitHub Workspace 讀取真實檔案後，在瀏覽器端產生照片包、原始數據包或完整專案 ZIP；沒有 Workspace 檔案時不會產生示範內容。
   - 📂 **線上瀏覽**：樹狀圖檢視檔案。
   - 📄 **報告預覽**：線上渲染 Markdown 結報，支援 LaTeX (KaTeX) 數學公式與特性圖展示，支援一鍵列印/匯出 PDF。
   - 📋 **活動紀錄**：展示時間軸（記錄誰在何時透過何者做了什麼）。
-  - 🤖 **Agent 助手指南**：提供符合 Skill 規範的標準 Prompt 複製卡片。
+  - 🤖 **Agent Task Workflow**：以自然語言提出 Workspace 完成度檢查、照片狀態檢視或報告更新；系統先讀取真實 context 並產生 proposal，寫入前必須明確確認。
 
 ---
 
 ## 5. 資料保存原則：GitHub 為唯一真實源
 
 * **GitHub Repository 是 Source of Truth**：所有數據、照片、分析腳本與結報均存放在 GitHub。
-* **免除第三方儲存依賴**：單檔直接經由 GitHub Raw 存取，批次下載直接由瀏覽器端（JSZip）或 GitHub API 串流打包，無需開通或依賴 Cloudflare R2。
+* **免除第三方儲存依賴**：單檔直接由 Workspace API 讀取 GitHub 內容，批次下載由瀏覽器端（JSZip）打包真實檔案，無需開通或依賴 Cloudflare R2。
 * **極高抗災性**：即便 Web App 服務停止，學生只要 `git clone` 自己的 Repo，所有成果依然 100% 完整可用。
 
 ---

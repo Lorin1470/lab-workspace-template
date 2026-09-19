@@ -16,6 +16,10 @@ import {
   isRawSanctuaryPath as isWorkspaceRawSanctuaryPath,
   WorkspaceError,
 } from './services/workspace.ts';
+import {
+  buildWorkspaceReview,
+  classifyAgentTask,
+} from './services/agent.ts';
 
 interface Env {
   DB?: any;
@@ -462,48 +466,7 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ success: true, logs: results || [] }), { headers });
         }
 
-        // 若 D1 尚未綁定，回傳示範演練紀錄 (Mock 降級模式)
-        return new Response(
-          JSON.stringify({
-            success: true,
-            mode: 'mock',
-            logs: [
-              {
-                id: 'log-1',
-                repo_name: repo,
-                experiment_id: exp || 'lab-01',
-                timestamp: new Date(Date.now() - 3600000).toISOString(),
-                actor_type: 'user',
-                actor_id: 'sample-user',
-                actor_name: '示範學生',
-                approval_status: 'none',
-                action: 'request_proposal',
-                target: 'report/report.md',
-                summary: '上傳示波器量測原始數據 measurements.csv 並提議更新報告',
-                files_changed: null,
-                commit_sha: null,
-              },
-              {
-                id: 'log-2',
-                repo_name: repo,
-                experiment_id: exp || 'lab-01',
-                timestamp: new Date(Date.now() - 1800000).toISOString(),
-                actor_type: 'agent',
-                actor_id: 'agent:antigravity',
-                actor_name: 'AI Agent',
-                requested_by: 'sample-user',
-                approved_by: 'sample-user',
-                approval_status: 'approved',
-                action: 'commit_created',
-                target: 'report/report.md',
-                summary: '清洗數據並繪製二極體特性曲線圖至 analysis/curve.svg',
-                files_changed: JSON.stringify(['report/report.md', 'analysis/curve.svg']),
-                commit_sha: 'a83f91c',
-              },
-            ].slice(0, limit),
-          }),
-          { headers }
-        );
+        return new Response(JSON.stringify({ error: 'Activity Log database unavailable' }), { status: 503, headers });
       }
 
       // 1.2 新增活動紀錄 (POST)
@@ -2013,6 +1976,279 @@ export const onRequest = async (context: any) => {
     }
 
     // 4.10a Agent Workflow context and explicit-confirmation execution
+    const expAgentTaskMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/agent\/task(?:\/(propose|execute))?$/);
+    if (expAgentTaskMatch) {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+
+      const expId = expAgentTaskMatch[1];
+      const taskAction = expAgentTaskMatch[2] || 'propose';
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+      }
+      const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
+      if (!prompt) {
+        return new Response(JSON.stringify({ error: 'Missing required field: prompt' }), { status: 400, headers });
+      }
+
+      const exp: any = await safeD1First(
+        env.DB.prepare(
+          'SELECT id, experiment_code, name, repository, course_id, report_mode, status, provisioning_status FROM experiments WHERE id = ?'
+        ).bind(expId)
+      );
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      if (!perm.allowed) {
+        return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), {
+          status: 403,
+          headers,
+        });
+      }
+
+      const reportPath =
+        exp.report_mode === 'separate'
+          ? `report/report-${sessionUser.github_id}.md`
+          : 'report/report.md';
+      const classification = classifyAgentTask(prompt);
+      if (!classification.intent) {
+        return new Response(
+          JSON.stringify({
+            error: classification.unsupportedReason,
+            supported_intents: ['workspace_review', 'photo_review', 'report_update'],
+            supported_intent: 'report_update',
+          }),
+          { status: 400, headers }
+        );
+      }
+
+      try {
+        const readPath = async (filePath: string) => {
+          try {
+            return await readFile(env, expId, filePath, sessionUser, env.FETCH || fetch);
+          } catch (err: any) {
+            if (err instanceof WorkspaceError && err.status === 404) return null;
+            throw err;
+          }
+        };
+        const listDirectory = async (directory: string) => {
+          try {
+            return await listFiles(env, expId, directory, sessionUser, env.FETCH || fetch);
+          } catch (err: any) {
+            if (err instanceof WorkspaceError && err.status === 404) return [];
+            throw err;
+          }
+        };
+        const [readme, report, photos, rawItems] = await Promise.all([
+          readPath('README.md'),
+          readPath(reportPath),
+          listDirectory('photos'),
+          listDirectory('raw'),
+        ]);
+        if (classification.intent === 'workspace_review') {
+          const review = buildWorkspaceReview({
+            experimentName: exp.name,
+            reportPath,
+            reportExists: Boolean(report),
+            readmeExists: Boolean(readme),
+            rawItemCount: rawItems.length,
+            photoItemCount: photos.length,
+          });
+          return new Response(
+            JSON.stringify({
+              success: true,
+              task: {
+                task_id: crypto.randomUUID(),
+                intent: classification.intent,
+                prompt,
+                experiment: {
+                  id: exp.id,
+                  code: exp.experiment_code,
+                  repository: exp.repository,
+                  report_mode: exp.report_mode || 'shared',
+                },
+                reads: [
+                  ...(readme ? [{ path: 'README.md', sha: readme.sha }] : []),
+                  ...(report ? [{ path: reportPath, sha: report.sha }] : []),
+                  { path: 'raw', item_count: rawItems.length },
+                  { path: 'photos', item_count: photos.length },
+                ],
+                changes: [],
+                summary: review.summary,
+                findings: review.findings,
+                warnings: review.warnings,
+                read_only: true,
+                confirmation_required: false,
+              },
+            }),
+            { status: 200, headers }
+          );
+        }
+        if (classification.intent === 'photo_review') {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              task: {
+                task_id: crypto.randomUUID(),
+                intent: classification.intent,
+                prompt,
+                reads: [{ path: 'photos', item_count: photos.length }],
+                changes: [],
+                summary: `目前 Workspace 已保存 ${photos.length} 個 photos/ 項目。`,
+                findings: photos.length
+                  ? ['照片已存在於 GitHub Workspace；如需報告引用，請在確認內容後由使用者選擇報告更新。']
+                  : ['尚未有已上傳照片；請先使用 Workspace 的照片上傳流程。'],
+                warnings: [
+                  '瀏覽器不能任意讀取 Desktop；Agent 不會假設本機照片已存在。',
+                  '這是唯讀檢視，不會重新命名、移動或刪除照片。',
+                ],
+                read_only: true,
+                confirmation_required: false,
+              },
+            }),
+            { status: 200, headers }
+          );
+        }
+        const sourceSummary = [
+          readme ? 'README.md' : null,
+          report ? reportPath : `${reportPath}（尚未建立）`,
+          `photos/（${photos.length} 個項目）`,
+        ].filter(Boolean);
+        const taskNote =
+          `\n\n## Agent 任務草稿\n\n` +
+          `本段由 Agent 依據目前 Workspace context 建立，來源：${sourceSummary.join('、')}。\n` +
+          `任務要求：${prompt}\n\n` +
+          `這是可供協作者審閱的草稿；未讀取到的本機 Desktop 檔案不會被假設為已上傳。`;
+        const baseContent = report?.content || `# ${exp.name}\n`;
+        const marker = '## Agent 任務草稿';
+        const proposedContent = baseContent.includes(marker)
+          ? baseContent.replace(/## Agent 任務草稿[\s\S]*$/, taskNote.trimStart())
+          : `${baseContent.trimEnd()}${taskNote}`;
+        const plan = {
+          task_id: crypto.randomUUID(),
+          intent: 'report_update',
+          prompt,
+          experiment: {
+            id: exp.id,
+            code: exp.experiment_code,
+            repository: exp.repository,
+            report_mode: exp.report_mode || 'shared',
+          },
+          reads: [
+            ...(readme ? [{ path: 'README.md', sha: readme.sha }] : []),
+            ...(report ? [{ path: reportPath, sha: report.sha }] : []),
+            { path: 'photos', item_count: photos.length },
+          ],
+          changes: [
+            {
+              path: reportPath,
+              operation: report ? 'modified' : 'created',
+              before_sha: report?.sha || null,
+              content: proposedContent,
+              summary: `根據 Workspace context 更新 ${reportPath}`,
+            },
+          ],
+          warnings: /桌面|desktop|本機|照片|photo/i.test(prompt)
+            ? ['瀏覽器不能任意讀取 Desktop；請先使用 Workspace 的「上傳照片」流程，Agent 才能讀取已上傳內容。']
+            : [],
+          read_only: false,
+          confirmation_required: true,
+        };
+        const planHash = await hashSessionToken(
+          JSON.stringify({
+            experiment_id: plan.experiment.id,
+            intent: plan.intent,
+            prompt: plan.prompt,
+            reads: plan.reads,
+            changes: plan.changes,
+          })
+        );
+        plan.plan_hash = planHash;
+
+        if (taskAction === 'propose') {
+          return new Response(JSON.stringify({ success: true, task: plan }), { status: 200, headers });
+        }
+        if (typeof body.plan_hash !== 'string' || body.plan_hash !== planHash) {
+          return new Response(
+            JSON.stringify({
+              error: 'Agent task proposal is stale or missing. Generate a new proposal before confirming execution.',
+              code: 'TASK_PROPOSAL_STALE',
+            }),
+            { status: 409, headers }
+          );
+        }
+        if (body.confirmed !== true) {
+          return new Response(JSON.stringify({ error: 'Explicit confirmation is required before executing Agent task' }), {
+            status: 400,
+            headers,
+          });
+        }
+
+        const change = plan.changes[0];
+        const writeResult = await createOrUpdateFile(
+          env,
+          expId,
+          change.path,
+          change.content,
+          `Agent task: update ${change.path}`,
+          sessionUser,
+          { sha: change.before_sha || undefined },
+          env.FETCH || fetch
+        );
+        const action = writeResult.action === 'created' ? 'file_created' : 'file_modified';
+        await env.DB.prepare(
+          `INSERT INTO activity_logs (
+            id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
+            actor_avatar, requested_by, approved_by, approval_status, action, target, summary, files_changed, commit_sha
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          crypto.randomUUID(),
+          exp.repository,
+          exp.experiment_code,
+          new Date().toISOString(),
+          'agent',
+          sessionUser.username,
+          sessionUser.display_name || sessionUser.username,
+          sessionUser.avatar_url || null,
+          sessionUser.username,
+          sessionUser.username,
+          'approved',
+          action,
+          change.path,
+          `Agent task completed: ${change.summary}`,
+          JSON.stringify([change.path]),
+          writeResult.commit_sha
+        ).run();
+        return new Response(
+          JSON.stringify({
+            success: true,
+            task_id: plan.task_id,
+            intent: plan.intent,
+            path: change.path,
+            commit_sha: writeResult.commit_sha,
+            content_sha: writeResult.content_sha,
+          }),
+          { status: 200, headers }
+        );
+      } catch (err: any) {
+        const status = err instanceof WorkspaceError ? err.status : err.status || 500;
+        return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+      }
+    }
+
     const expAgentMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/agent(?:\/(context|execute))?$/);
     if (expAgentMatch) {
       if (request.method !== 'GET' && request.method !== 'POST') {

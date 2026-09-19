@@ -118,28 +118,11 @@ export const CourseList: React.FC<CourseListProps> = ({
   };
 
   const getRoleBadge = (role?: string) => {
-    switch (role) {
-      case 'teacher':
-        return (
-          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">
-            教師
-          </span>
-        );
-      case 'assistant':
-        return (
-          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-            助教
-          </span>
-        );
-      case 'student':
-        return (
-          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-            學生
-          </span>
-        );
-      default:
-        return null;
-    }
+    return role ? (
+      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+        協作者
+      </span>
+    ) : null;
   };
 
   return (
