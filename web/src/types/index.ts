@@ -217,3 +217,33 @@ export interface PermissionResult {
   experiment?: Experiment | null;
   report_mode?: ReportMode;
 }
+
+// ==========================================
+// 實驗工作區 (Workspace) API 型別
+// ==========================================
+
+export interface WorkspaceFileItem {
+  name: string;
+  path: string;
+  type: 'file' | 'dir' | 'directory';
+  size?: number;
+  sha?: string;
+}
+
+export interface WorkspaceFileContent {
+  name: string;
+  path: string;
+  size: number;
+  encoding: string;
+  content: string;
+  sha: string;
+  type: 'file';
+}
+
+export interface WorkspaceWriteResponse {
+  success: boolean;
+  path: string;
+  action: string;
+  commit_sha: string;
+  content_sha: string;
+}

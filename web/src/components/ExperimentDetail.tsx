@@ -36,6 +36,9 @@ import {
   X,
 } from 'lucide-react';
 import JSZip from 'jszip';
+import { WorkspaceManager } from './WorkspaceManager.tsx';
+
+
 
 interface ExperimentDetailProps {
   experiment: Experiment;
@@ -618,7 +621,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             { id: 'activity', label: '📋 活動紀錄 (Activity Log)', icon: Activity },
             { id: 'members', label: `👥 實驗成員 (${members.length})`, icon: Users },
             { id: 'report', label: '📄 實驗報告', icon: FileText },
-            { id: 'files', label: '📂 檔案結構', icon: FolderTree },
+            { id: 'files', label: '📁 工作區 (Workspace)', icon: FolderTree },
             { id: 'upload', label: '📤 上傳資料', icon: Upload },
             { id: 'download', label: '📥 打包下載', icon: Download },
             { id: 'agent', label: '🤖 Agent 協作', icon: Bot },
@@ -988,87 +991,42 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
           </div>
         )}
 
-        {/* 4. 檔案結構 */}
+        {/* 4. 實驗 GitHub 工作區 (Workspace) */}
         {activeTab === 'files' && (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-500">
-              工作區目錄規範（嚴格遵循 Template 結構與 Agent Skill 規範）：
-            </p>
-            <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 font-mono text-xs">
-              {[
-                { path: 'config.yml', desc: '實驗工作區組態（唯讀宣告）', cat: 'root' },
-                { path: 'README.md', desc: '實驗專案說明文件', cat: 'root' },
-                { path: 'raw/', desc: '原始數據存放區（聖域保護：唯讀，不可覆蓋）', cat: 'raw' },
-                { path: 'photos/', desc: '實驗照片存放區（原始未壓縮圖檔）', cat: 'photos' },
-                { path: 'processed/', desc: '清洗後資料存放區（Agent / 程式清洗輸出）', cat: 'processed' },
-                { path: 'analysis/', desc: '分析程式碼與產出之圖表（SVG / PNG）', cat: 'analysis' },
-                { path: 'report/', desc: '實驗報告 Markdown 檔案存放區', cat: 'report' },
-                { path: '.github/skills/experiment-report/SKILL.md', desc: 'AI Agent 規範定義檔案', cat: 'root' },
-              ].map((item) => (
-                <div key={item.path} className="p-3 flex items-center justify-between hover:bg-slate-50">
-                  <div className="flex items-center space-x-3">
-                    <span>
-                      {item.cat === 'raw' && '🔒'}
-                      {item.cat === 'photos' && '📸'}
-                      {item.cat === 'processed' && '🧹'}
-                      {item.cat === 'analysis' && '📊'}
-                      {item.cat === 'report' && '📝'}
-                      {item.cat === 'root' && '📄'}
-                    </span>
-                    <span className="font-semibold text-slate-800">{item.path}</span>
-                    {item.cat === 'raw' && (
-                      <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[10px]">
-                        聖域唯讀保護
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-slate-400">{item.desc}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <WorkspaceManager
+            experiment={experiment}
+            user={user}
+            isCollaborator={isCollaborator}
+            onActivityRefresh={loadActivityLogs}
+            onError={onError}
+            onSuccess={onSuccess}
+          />
         )}
 
-        {/* 5. 上傳資料 */}
+        {/* 5. 上傳資料 (整合至工作區) */}
         {activeTab === 'upload' && (
           <div className="space-y-6">
-            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-start space-x-3">
-              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <div className="text-sm text-amber-800">
-                <p className="font-bold">原始數據保護原則</p>
-                <p className="mt-0.5">
-                  所有儀器量測檔案請直接提交至 <code>raw/</code>。該目錄受到 Agent Skill 聖域保護，嚴禁任何覆蓋或刪除操作。
+            <div className="bg-blue-50 border border-blue-200 p-6 rounded-xl flex items-start space-x-4 shadow-xs">
+              <FolderTree className="w-8 h-8 text-blue-600 shrink-0 mt-1" />
+              <div className="space-y-2">
+                <h4 className="font-bold text-slate-900 text-base">工作區資料上傳已全面整合</h4>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  實驗量測數據與實驗照片上傳功能已與 GitHub Workspace 深度整合。您可以在「📁 工作區」中即時瀏覽真實目錄、上傳原始數據至 <code>raw/</code>（受聖域保護，不可竄改）、上傳實驗照片至 <code>photos/</code>（上限 5MB），並即時取得真實 GitHub Git Commit SHA 與活動紀錄更新。
                 </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-8 text-center transition-colors">
-                <div className="mx-auto w-12 h-12 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-3">
-                  <Upload className="w-6 h-6" />
+                <div className="pt-2">
+                  <button
+                    onClick={() => setActiveTab('files')}
+                    className="inline-flex items-center space-x-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer shadow-xs"
+                  >
+                    <FolderTree className="w-4 h-4" />
+                    <span>前往「📁 工作區」操作</span>
+                  </button>
                 </div>
-                <h4 className="font-semibold text-slate-800 text-sm">上傳實驗照片至 photos/</h4>
-                <p className="text-xs text-slate-400 mt-1 mb-4">支援 JPG、PNG、HEIC（儀器示波器畫面、電路接線圖）</p>
-                <label className="inline-block bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg cursor-pointer transition-colors">
-                  選擇照片檔案
-                  <input type="file" multiple accept="image/*" className="hidden" />
-                </label>
-              </div>
-
-              <div className="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-8 text-center transition-colors">
-                <div className="mx-auto w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mb-3">
-                  <Upload className="w-6 h-6" />
-                </div>
-                <h4 className="font-semibold text-slate-800 text-sm">上傳量測數據至 raw/</h4>
-                <p className="text-xs text-slate-400 mt-1 mb-4">支援 CSV、XLSX、TXT（不可覆蓋已有檔案）</p>
-                <label className="inline-block bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg cursor-pointer transition-colors">
-                  選擇數據檔案
-                  <input type="file" multiple accept=".csv,.xlsx,.txt,.dat" className="hidden" />
-                </label>
               </div>
             </div>
           </div>
         )}
+
 
         {/* 6. 打包下載 */}
         {activeTab === 'download' && (

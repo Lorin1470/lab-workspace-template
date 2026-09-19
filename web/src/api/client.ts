@@ -16,6 +16,9 @@ import {
   CourseRole,
   ReportMode,
   ProvisionExperimentResponse,
+  WorkspaceFileItem,
+  WorkspaceFileContent,
+  WorkspaceWriteResponse,
 } from '../types/index.ts';
 
 export class ApiError extends Error {
@@ -253,6 +256,63 @@ export const api = {
         logs: data.logs || [],
         mode: data.mode,
       };
+    },
+  },
+
+  // 實驗工作區檔案與協作 (Workspace)
+  workspace: {
+    listFiles: async (expId: string, path?: string): Promise<WorkspaceFileItem[]> => {
+      const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+      const data = await request<{ items: WorkspaceFileItem[] }>(
+        `/api/experiments/${encodeURIComponent(expId)}/workspace/files${qs}`
+      );
+      return data.items || [];
+    },
+    readFile: async (expId: string, path: string): Promise<WorkspaceFileContent> => {
+      return await request<WorkspaceFileContent>(
+        `/api/experiments/${encodeURIComponent(expId)}/workspace/file?path=${encodeURIComponent(path)}`
+      );
+    },
+    saveFile: async (
+      expId: string,
+      data: {
+        path: string;
+        content: string;
+        message: string;
+        sha?: string;
+      }
+    ): Promise<WorkspaceWriteResponse> => {
+      return await request<WorkspaceWriteResponse>(
+        `/api/experiments/${encodeURIComponent(expId)}/workspace/file`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(data),
+        }
+      );
+    },
+    uploadRaw: async (
+      expId: string,
+      formData: FormData
+    ): Promise<WorkspaceWriteResponse> => {
+      return await request<WorkspaceWriteResponse>(
+        `/api/experiments/${encodeURIComponent(expId)}/workspace/raw`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
+    },
+    uploadPhoto: async (
+      expId: string,
+      formData: FormData
+    ): Promise<WorkspaceWriteResponse> => {
+      return await request<WorkspaceWriteResponse>(
+        `/api/experiments/${encodeURIComponent(expId)}/workspace/photos`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
     },
   },
 };

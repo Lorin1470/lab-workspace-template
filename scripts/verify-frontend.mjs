@@ -35,8 +35,21 @@ const testKeypairPkcs8 = crypto.generateKeyPairSync('rsa', {
 class MockGitHubApi {
   constructor() {
     this.repos = new Map();
+    this.files = new Map();
+    this.commitCounter = 1000;
     this.authorizedOwner = 'example-org';
     this.templateFail = false;
+  }
+
+  setFile(ownerRepo, filePath, content, isDir = false) {
+    const key = `${ownerRepo.toLowerCase()}:${filePath}`;
+    const sha = crypto.createHash('sha1').update(content || filePath).digest('hex');
+    this.files.set(key, {
+      content: content || '',
+      sha,
+      size: Buffer.byteLength(content || '', 'utf8'),
+      type: isDir ? 'dir' : 'file',
+    });
   }
 
   fetch = async (url, options = {}) => {
@@ -104,6 +117,150 @@ class MockGitHubApi {
       };
       this.repos.set(key, repoData);
       return new Response(JSON.stringify(repoData), { status: 201 });
+    }
+
+    // Contents API (GET & PUT)
+    const contentsMatch = urlStr.match(/\/repos\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/contents\/?(.*)$/);
+    if (contentsMatch) {
+      const [_, owner, repo, rawPath] = contentsMatch;
+      const ownerRepo = `${owner}/${repo}`.toLowerCase();
+      const filePath = decodeURIComponent(rawPath.split('?')[0]);
+
+      if (method === 'GET') {
+        const prefix = filePath ? `${filePath}/` : '';
+        const matchingEntries = [];
+        const seenDirs = new Set();
+
+        for (const [k, v] of this.files.entries()) {
+          if (!k.startsWith(`${ownerRepo}:`)) continue;
+          const relPath = k.slice(ownerRepo.length + 1);
+
+          if (filePath === '') {
+            const topPart = relPath.split('/')[0];
+            if (relPath.includes('/')) {
+              if (!seenDirs.has(topPart)) {
+                seenDirs.add(topPart);
+                matchingEntries.push({
+                  name: topPart,
+                  path: topPart,
+                  sha: crypto.createHash('sha1').update(topPart).digest('hex'),
+                  size: 0,
+                  type: 'dir',
+                });
+              }
+            } else {
+              matchingEntries.push({
+                name: relPath,
+                path: relPath,
+                sha: v.sha,
+                size: v.size,
+                type: 'file',
+              });
+            }
+          } else if (relPath === filePath && v.type === 'dir') {
+            continue;
+          } else if (relPath.startsWith(prefix)) {
+            const remainder = relPath.slice(prefix.length);
+            const subPart = remainder.split('/')[0];
+            if (remainder.includes('/')) {
+              if (!seenDirs.has(subPart)) {
+                seenDirs.add(subPart);
+                matchingEntries.push({
+                  name: subPart,
+                  path: `${prefix}${subPart}`,
+                  sha: crypto.createHash('sha1').update(subPart).digest('hex'),
+                  size: 0,
+                  type: 'dir',
+                });
+              }
+            } else {
+              matchingEntries.push({
+                name: subPart,
+                path: relPath,
+                sha: v.sha,
+                size: v.size,
+                type: 'file',
+              });
+            }
+          }
+        }
+
+        const directKey = `${ownerRepo}:${filePath}`;
+        const exactFile = this.files.get(directKey);
+
+        if (exactFile && exactFile.type === 'file') {
+          return new Response(
+            JSON.stringify({
+              name: filePath.split('/').pop(),
+              path: filePath,
+              sha: exactFile.sha,
+              size: exactFile.size,
+              type: 'file',
+              encoding: 'base64',
+              content: Buffer.from(exactFile.content).toString('base64'),
+            }),
+            { status: 200 }
+          );
+        }
+
+        if (exactFile && exactFile.type === 'dir') {
+          return new Response(JSON.stringify(matchingEntries), { status: 200 });
+        }
+
+        if (matchingEntries.length > 0 || filePath === '') {
+          return new Response(JSON.stringify(matchingEntries), { status: 200 });
+        }
+
+        return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+      }
+
+      if (method === 'PUT') {
+        const body = JSON.parse(options.body || '{}');
+        const directKey = `${ownerRepo}:${filePath}`;
+        const existing = this.files.get(directKey);
+
+        // 樂觀鎖校驗
+        if (body.sha && (!existing || existing.sha !== body.sha)) {
+          return new Response(
+            JSON.stringify({
+              message: `Resource is at ${existing ? existing.sha : 'none'} but expected ${body.sha}`,
+            }),
+            { status: 409 }
+          );
+        }
+
+        const isNew = !existing;
+        const decodedContent = Buffer.from(body.content || '', 'base64').toString('utf8');
+        const newFileSha = crypto.createHash('sha1').update(decodedContent).digest('hex');
+        this.commitCounter++;
+        const newCommitSha = crypto
+          .createHash('sha1')
+          .update(`commit-${this.commitCounter}-${filePath}`)
+          .digest('hex');
+
+        this.files.set(directKey, {
+          content: decodedContent,
+          sha: newFileSha,
+          size: Buffer.byteLength(decodedContent, 'utf8'),
+          type: 'file',
+        });
+
+        return new Response(
+          JSON.stringify({
+            content: {
+              name: filePath.split('/').pop(),
+              path: filePath,
+              sha: newFileSha,
+              size: Buffer.byteLength(decodedContent, 'utf8'),
+            },
+            commit: {
+              sha: newCommitSha,
+              message: body.message,
+            },
+          }),
+          { status: isNew ? 201 : 200 }
+        );
+      }
     }
 
     return new Response(JSON.stringify({ message: 'Not found' }), { status: 404 });
@@ -1129,6 +1286,153 @@ async function runFrontendIntegrationTests() {
     pass('登出後舊 Session 存取資源回傳 401 Unauthorized');
   } catch (err) {
     fail('群組 7 執行失敗', err);
+  }
+
+  // -------------------------------------------------------------
+  // 群組 9: Workspace 前端整合、API Client 與錯誤轉譯驗證
+  // -------------------------------------------------------------
+  console.log('\n▶ [群組 9: Workspace 前端整合、API Client 與錯誤轉譯驗證]');
+  try {
+    // 預先於 MockGitHub 注入測試檔案
+    const testRepo = 'example-org/physics-exp-01';
+    mockGitHub.setFile(testRepo, 'README.md', '# 物理實驗工作區\n歡迎共同協作。');
+    mockGitHub.setFile(testRepo, 'config.yml', 'version: 1.0');
+    mockGitHub.setFile(testRepo, 'notes.md', '初始筆記內容');
+    mockGitHub.setFile(testRepo, 'report/report-99999.md', '# 林老師的個人報告');
+    mockGitHub.setFile(testRepo, 'report/report-12345.md', '# 王小明同學的個人報告');
+    mockGitHub.setFile(testRepo, 'raw/baseline.csv', 'time,voltage\n0,0\n1,2.5');
+
+    // 9.1 listFiles: 協作者成功讀取真實 GitHub 檔案樹 (200 OK)
+    const listRes = await apiRequest(`/experiments/${expId}/workspace/files`, {
+      cookie: studentCookie,
+    });
+    assert.strictEqual(listRes.status, 200);
+    assert(Array.isArray(listRes.data.items));
+    assert(listRes.data.items.some((f) => f.name === 'README.md' && f.type === 'file'));
+    assert(listRes.data.items.some((f) => f.name === 'report' && (f.type === 'dir' || f.type === 'directory')));
+    pass('協作者成功取得真實 Workspace 檔案樹清單 (200 OK)');
+
+    // 9.2 readFile: 協作者成功讀取檔案內容並取得真實 SHA (200 OK)
+    const readRes = await apiRequest(`/experiments/${expId}/workspace/file?path=README.md`, {
+      cookie: studentCookie,
+    });
+    assert.strictEqual(readRes.status, 200);
+    assert.strictEqual(readRes.data.path, 'README.md');
+    assert(readRes.data.content.includes('# 物理實驗工作區'));
+    assert(typeof readRes.data.sha === 'string' && readRes.data.sha.length > 0);
+    pass('協作者成功讀取文字檔案內容並取得現行 SHA (200 OK)');
+
+    // 9.3 saveFile: 攜帶有效 SHA 成功更新檔案並產生 commit_sha (200 OK)
+    const saveRes = await apiRequest(`/experiments/${expId}/workspace/file`, {
+      method: 'PUT',
+      cookie: studentCookie,
+      body: {
+        path: 'notes.md',
+        content: '更新後的筆記內容：量測完成',
+        message: '更新實驗筆記',
+      },
+    });
+    assert.strictEqual(saveRes.status, 200);
+    assert.strictEqual(saveRes.data.success, true);
+    assert(typeof saveRes.data.commit_sha === 'string' && saveRes.data.commit_sha.length === 40);
+    pass('協作者成功儲存檔案並自 API 取得真實 40 位元 commit_sha (200 OK)');
+
+    // 9.4 409 Conflict 樂觀鎖驗證：帶入過期/錯誤 SHA 遭到 409 阻絕，防止私下覆寫他人成果
+    const conflictRes = await apiRequest(`/experiments/${expId}/workspace/file`, {
+      method: 'PUT',
+      cookie: studentCookie,
+      body: {
+        path: 'README.md',
+        content: '企圖以過期 SHA 覆寫 README',
+        message: '嘗試覆寫',
+        sha: 'stale_expired_fake_sha_00000000000000000000',
+      },
+    });
+    assert.strictEqual(conflictRes.status, 409);
+    pass('過期 SHA 正確引發 409 Conflict 樂觀鎖保護，前端提示重新載入');
+
+    // 9.5 Raw Data Sanctuary 上傳：上傳原始數據成功 (201 Created)
+    const rawRes = await apiRequest(`/experiments/${expId}/workspace/raw`, {
+      method: 'POST',
+      cookie: studentCookie,
+      body: {
+        path: 'sensor_data.csv',
+        content: 'timestamp,value\n100,3.14\n200,3.15',
+        message: '上傳感測器原始數據',
+      },
+    });
+    assert.strictEqual(rawRes.status, 201);
+    assert.strictEqual(rawRes.data.success, true);
+    assert.strictEqual(rawRes.data.path, 'raw/sensor_data.csv');
+    assert(typeof rawRes.data.commit_sha === 'string' && rawRes.data.commit_sha.length === 40);
+    pass('專屬 Raw 端點成功上傳原始數據至 raw/ 並記錄 commit_sha (201 Created)');
+
+    // 9.6 Raw Data Sanctuary 409 不可覆寫阻絕：重複上傳同名檔案回傳 409
+    const rawConflictRes = await apiRequest(`/experiments/${expId}/workspace/raw`, {
+      method: 'POST',
+      cookie: studentCookie,
+      body: {
+        path: 'sensor_data.csv',
+        content: '企圖竄改原始數據',
+      },
+    });
+    assert.strictEqual(rawConflictRes.status, 409);
+    pass('重複上傳 Raw Data 遭 409 阻絕（原始資料已存在，Raw Data 不允許覆寫）');
+
+    // 9.7 通用 PUT 寫入 raw/* 遭 403 阻擋 (Raw Sanctuary 鐵律)
+    const putRawRes = await apiRequest(`/experiments/${expId}/workspace/file`, {
+      method: 'PUT',
+      cookie: studentCookie,
+      body: {
+        path: 'raw/hack.csv',
+        content: 'test',
+        message: 'hack raw',
+      },
+    });
+    assert.strictEqual(putRawRes.status, 403);
+    pass('通用 File PUT 寫入 raw/* 遭 403 聖域鐵律阻絕');
+
+    // 9.8 照片上傳：上傳合法 PNG 圖片成功 (201 Created)
+    const photoRes = await apiRequest(`/experiments/${expId}/workspace/photos`, {
+      method: 'POST',
+      cookie: studentCookie,
+      body: {
+        path: 'circuit.png',
+        content: Buffer.from('mock_png_binary_data').toString('base64'),
+        isBase64: true,
+        mime_type: 'image/png',
+      },
+    });
+    assert.strictEqual(photoRes.status, 201);
+    assert.strictEqual(photoRes.data.path, 'photos/circuit.png');
+    assert(typeof photoRes.data.commit_sha === 'string' && photoRes.data.commit_sha.length === 40);
+    pass('照片上傳端點成功寫入 photos/ 並取得真實 commit_sha (201 Created)');
+
+    // 9.9 照片過大 (超過 5MB) 遭 413 Payload Too Large 阻絕
+    const hugePhotoContent = 'A'.repeat(5 * 1024 * 1024 + 100);
+    const hugePhotoRes = await apiRequest(`/experiments/${expId}/workspace/photos`, {
+      method: 'POST',
+      cookie: studentCookie,
+      body: {
+        path: 'huge.jpg',
+        content: hugePhotoContent,
+        isBase64: false,
+        mime_type: 'image/jpeg',
+      },
+    });
+    assert.strictEqual(hugePhotoRes.status, 413);
+    pass('超過 5MB 照片上傳遭 413 Payload Too Large 阻擋');
+
+    // 9.10 驗證 Activity Log 已同步寫入 Workspace 操作與真實 commit_sha
+    const actRes = await apiRequest(`/activity?repo=${encodeURIComponent(testRepo)}`, {
+      cookie: studentCookie,
+    });
+    assert.strictEqual(actRes.status, 200);
+    assert(actRes.data.logs.some((l) => l.action === 'raw_uploaded' && l.commit_sha.length === 40));
+    assert(actRes.data.logs.some((l) => l.action === 'photo_uploaded' && l.commit_sha.length === 40));
+    pass('Activity Log 成功包含 Workspace 最新操作與真實 40 位元 commit_sha');
+  } catch (err) {
+    fail('群組 9 執行失敗', err);
   }
 
   // 測試總結
