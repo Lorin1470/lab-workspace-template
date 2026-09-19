@@ -10,14 +10,84 @@ interface Env {
   GITHUB_CLIENT_SECRET?: string;
 }
 
+// 雜湊 Session Token (SHA-256)
+async function hashSessionToken(token: string): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(token);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// 解析 Cookie 標頭
+function parseCookies(header: string | null): Record<string, string> {
+  if (!header) return {};
+  const cookies: Record<string, string> = {};
+  for (const part of header.split(';')) {
+    const [key, ...vals] = part.trim().split('=');
+    if (key) {
+      cookies[key.trim()] = vals.join('=').trim();
+    }
+  }
+  return cookies;
+}
+
+// 依據 Cookie 驗證並取得 Session 使用者
+async function getSessionUser(request: Request, env: Env): Promise<{
+  session_id: string;
+  github_id: string;
+  username: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  expires_at: string;
+} | null> {
+  if (!env.DB) return null;
+  const cookies = parseCookies(request.headers.get('Cookie'));
+  const rawToken = cookies['app_session'];
+  if (!rawToken || typeof rawToken !== 'string' || rawToken.trim() === '') {
+    return null;
+  }
+  const hashedId = await hashSessionToken(rawToken.trim());
+  const row: any = await env.DB.prepare(
+    'SELECT session_id, github_id, username, display_name, avatar_url, expires_at FROM user_sessions WHERE session_id = ?'
+  ).bind(hashedId).first();
+
+  if (!row) return null;
+
+  // 檢查是否過期
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    await env.DB.prepare('DELETE FROM user_sessions WHERE session_id = ?').bind(hashedId).run().catch(() => {});
+    return null;
+  }
+
+  return row;
+}
+
+/**
+ * 權限檢查擴充點 (Extension Point)
+ * 權限模型：GitHub Identity -> D1 Membership -> config.yml consistency -> GitHub Repo Permission
+ */
+export async function checkExperimentPermission(
+  user: { username: string; github_id: string } | null,
+  repo: string,
+  expId?: string
+): Promise<{ allowed: boolean; role: 'student' | 'teacher' | 'guest'; reason?: string }> {
+  if (!user) {
+    return { allowed: false, role: 'guest', reason: 'Unauthenticated' };
+  }
+  // 本階段預留 Extension Point，預設允許通過身分驗證者操作
+  return { allowed: true, role: 'student' };
+}
+
 export const onRequest = async (context: any) => {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api\/?/, '');
 
-  const headers = {
+  const origin = request.headers.get('Origin') || '*';
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
@@ -118,16 +188,23 @@ export const onRequest = async (context: any) => {
 
       // 1.2 新增活動紀錄 (POST)
       if (request.method === 'POST') {
-        // A. 驗證 Bearer Token
+        // A. 驗證身分 (支援 Bearer Token CLI 與 Session Cookie Web 雙軌)
         const authHeader = request.headers.get('Authorization') || '';
         const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
         const expectedSecret =
           env.ACTIVITY_LOG_SECRET ||
           (typeof process !== 'undefined' && process.env ? process.env.ACTIVITY_LOG_SECRET : undefined);
 
-        if (!expectedSecret || !token || token !== expectedSecret) {
+        const isBearerAuth = !!(expectedSecret && token && token === expectedSecret);
+        let sessionUser: any = null;
+
+        if (!isBearerAuth) {
+          sessionUser = await getSessionUser(request, env);
+        }
+
+        if (!isBearerAuth && !sessionUser) {
           return new Response(
-            JSON.stringify({ error: 'Unauthorized: Invalid or missing Bearer token' }),
+            JSON.stringify({ error: 'Unauthorized: Invalid or missing Bearer token or session' }),
             { status: 401, headers }
           );
         }
@@ -145,6 +222,21 @@ export const onRequest = async (context: any) => {
             status: 400,
             headers,
           });
+        }
+
+        // 若使用 Web Session 鑑權，強制以伺服器端 Session 身分鎖定操作者身分 (Anti-Spoofing)
+        // 注意：登入身分 (Authentication) 僅代表「誰登入發起請求」，不等於該操作「已獲得批准 (Approval)」。
+        // requested_by 反映發起者，而 approved_by 與 approval_status 仍維持既有 Activity Log v1.1/v1.2
+        // 的 approval input 語義（例如分步審批 file modification、commit、push），
+        // 登入本身不代表自動授予或取代任何審查批准權限。
+        if (sessionUser) {
+          body.actor_type = 'web';
+          body.actor_id = sessionUser.username;
+          body.actor_name = sessionUser.display_name || sessionUser.username;
+          body.actor_avatar = sessionUser.avatar_url || null;
+          body.requested_by = sessionUser.username;
+          // approved_by 保持由調用端傳入之既有宣告值或為 null，絕不因使用者登入就自動代表「已批准」
+          body.approved_by = body.approved_by ? String(body.approved_by).trim() : null;
         }
 
         // C. 驗證必要欄位
@@ -325,6 +417,199 @@ export const onRequest = async (context: any) => {
         }),
         { headers }
       );
+    }
+
+    // 3. GitHub OAuth 與 Session API
+    if (path === 'auth/login') {
+      if (!env.GITHUB_CLIENT_ID) {
+        return new Response(
+          JSON.stringify({ error: 'GitHub OAuth is not configured (missing GITHUB_CLIENT_ID)' }),
+          { status: 500, headers }
+        );
+      }
+      const rawReturnTo = url.searchParams.get('return_to') || '/';
+      // Open Redirect 防禦：只允許以 / 開頭且非 // 的站內相對路徑
+      const returnTo = (rawReturnTo.startsWith('/') && !rawReturnTo.startsWith('//') && !rawReturnTo.includes(':'))
+        ? rawReturnTo
+        : '/';
+
+      const state = crypto.randomUUID();
+      const stateCookieValue = `${state}:${encodeURIComponent(returnTo)}`;
+      const callbackUrl = `${url.origin}/api/auth/callback`;
+
+      const githubAuthUrl = new URL('https://github.com/login/oauth/authorize');
+      githubAuthUrl.searchParams.set('client_id', env.GITHUB_CLIENT_ID);
+      githubAuthUrl.searchParams.set('redirect_uri', callbackUrl);
+      githubAuthUrl.searchParams.set('scope', 'read:user');
+      githubAuthUrl.searchParams.set('state', state);
+
+      const responseHeaders = new Headers();
+      responseHeaders.set('Location', githubAuthUrl.toString());
+      responseHeaders.append(
+        'Set-Cookie',
+        `oauth_state=${encodeURIComponent(stateCookieValue)}; Path=/api/auth; Max-Age=300; HttpOnly; Secure; SameSite=Lax`
+      );
+
+      return new Response(null, { status: 302, headers: responseHeaders });
+    }
+
+    if (path === 'auth/callback') {
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state');
+
+      const cookies = parseCookies(request.headers.get('Cookie'));
+      const rawCookieState = cookies['oauth_state'];
+
+      if (!code || !state || !rawCookieState) {
+        return new Response(
+          JSON.stringify({ error: 'Invalid or missing OAuth state or code' }),
+          { status: 400, headers }
+        );
+      }
+
+      let decodedState = '';
+      let returnTo = '/';
+      try {
+        const parts = decodeURIComponent(rawCookieState).split(':');
+        decodedState = parts[0];
+        if (parts[1]) returnTo = decodeURIComponent(parts[1]);
+      } catch {
+        return new Response(
+          JSON.stringify({ error: 'Malformed oauth_state cookie' }),
+          { status: 400, headers }
+        );
+      }
+
+      if (state !== decodedState) {
+        return new Response(
+          JSON.stringify({ error: 'OAuth state mismatch (possible CSRF)' }),
+          { status: 403, headers }
+        );
+      }
+
+      if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET) {
+        return new Response(
+          JSON.stringify({ error: 'GitHub OAuth server configuration error' }),
+          { status: 500, headers }
+        );
+      }
+
+      // 交換 Access Token
+      const callbackUrl = `${url.origin}/api/auth/callback`;
+      const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'lab-workspace-web',
+        },
+        body: JSON.stringify({
+          client_id: env.GITHUB_CLIENT_ID,
+          client_secret: env.GITHUB_CLIENT_SECRET,
+          code,
+          redirect_uri: callbackUrl,
+        }),
+      });
+
+      const tokenData: any = await tokenRes.json().catch(() => ({}));
+      if (!tokenData || !tokenData.access_token) {
+        return new Response(
+          JSON.stringify({
+            error: 'Failed to obtain access token from GitHub',
+            detail: tokenData.error_description || tokenData.error,
+          }),
+          { status: 502, headers }
+        );
+      }
+
+      // 使用 Token 讀取 GitHub 使用者資訊
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: {
+          'Authorization': `Bearer ${tokenData.access_token}`,
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'lab-workspace-web',
+        },
+      });
+
+      if (!userRes.ok) {
+        return new Response(
+          JSON.stringify({ error: 'Failed to fetch user profile from GitHub' }),
+          { status: 502, headers }
+        );
+      }
+
+      const userData: any = await userRes.json();
+      const githubId = String(userData.id);
+      const username = String(userData.login);
+      const displayName = userData.name ? String(userData.name) : username;
+      const avatarUrl = userData.avatar_url ? String(userData.avatar_url) : null;
+
+      // 建立 Opaque Session Token (不儲存 Access Token)
+      const rawSessionToken = crypto.randomUUID() + '.' + crypto.randomUUID();
+      const hashedSessionId = await hashSessionToken(rawSessionToken);
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 天有效期
+
+      if (env.DB) {
+        await env.DB.prepare(
+          `INSERT INTO user_sessions (session_id, github_id, username, display_name, avatar_url, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(hashedSessionId, githubId, username, displayName, avatarUrl, now, expiresAt).run();
+      }
+
+      const responseHeaders = new Headers();
+      responseHeaders.set('Location', returnTo);
+      // 清除 oauth_state
+      responseHeaders.append(
+        'Set-Cookie',
+        'oauth_state=; Path=/api/auth; Max-Age=0; HttpOnly; Secure; SameSite=Lax'
+      );
+      // 寫入 app_session Cookie (7 天)
+      responseHeaders.append(
+        'Set-Cookie',
+        `app_session=${rawSessionToken}; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax`
+      );
+
+      return new Response(null, { status: 302, headers: responseHeaders });
+    }
+
+    if (path === 'auth/me') {
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(
+          JSON.stringify({ authenticated: false, user: null }),
+          { headers }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          authenticated: true,
+          user: {
+            github_id: sessionUser.github_id,
+            username: sessionUser.username,
+            display_name: sessionUser.display_name,
+            avatar_url: sessionUser.avatar_url,
+          },
+        }),
+        { headers }
+      );
+    }
+
+    if (path === 'auth/logout') {
+      const cookies = parseCookies(request.headers.get('Cookie'));
+      const rawToken = cookies['app_session'];
+      if (rawToken && env.DB) {
+        const hashedId = await hashSessionToken(rawToken.trim());
+        await env.DB.prepare('DELETE FROM user_sessions WHERE session_id = ?').bind(hashedId).run().catch(() => {});
+      }
+
+      const responseHeaders = new Headers(headers);
+      responseHeaders.append(
+        'Set-Cookie',
+        'app_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax'
+      );
+
+      return new Response(JSON.stringify({ success: true }), { headers: responseHeaders });
     }
 
     return new Response(JSON.stringify({ error: 'Endpoint not found', path }), { status: 404, headers });

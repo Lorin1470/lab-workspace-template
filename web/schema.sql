@@ -34,3 +34,6 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     expires_at DATETIME NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON user_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_github ON user_sessions(github_id);

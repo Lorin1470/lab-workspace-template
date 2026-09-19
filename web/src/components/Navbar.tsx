@@ -1,5 +1,6 @@
 import React from 'react';
-import { FlaskConical, Github, BookOpen } from 'lucide-react';
+import { FlaskConical, Github, BookOpen, LogOut } from 'lucide-react';
+import { AuthUser } from '../types/index.ts';
 
 interface NavbarProps {
   currentCourse: string;
@@ -7,6 +8,8 @@ interface NavbarProps {
   availableCourses: string[];
   activeRepo: string | null;
   onBackToHome: () => void;
+  user: AuthUser | null;
+  onLogout: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -15,6 +18,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   availableCourses,
   activeRepo,
   onBackToHome,
+  user,
+  onLogout,
 }) => {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
@@ -52,16 +57,41 @@ export const Navbar: React.FC<NavbarProps> = ({
             </select>
           </div>
 
-          {/* GitHub 狀態與母倉庫連結 */}
-          <a
-            href="https://github.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center space-x-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-lg transition-colors"
-          >
-            <Github className="w-4 h-4" />
-            <span>GitHub 連線中</span>
-          </a>
+          {/* GitHub 身分驗證狀態 */}
+          {user ? (
+            <div className="flex items-center space-x-2.5 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
+              {user.avatar_url ? (
+                <img
+                  src={user.avatar_url}
+                  alt={user.username}
+                  className="w-6 h-6 rounded-full border border-slate-300"
+                />
+              ) : (
+                <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs">
+                  {user.username[0]?.toUpperCase()}
+                </div>
+              )}
+              <span className="text-xs font-semibold text-slate-800 hidden sm:inline-block">
+                {user.display_name || user.username}
+              </span>
+              <button
+                onClick={onLogout}
+                className="flex items-center space-x-1 text-xs text-slate-500 hover:text-red-600 hover:bg-red-50 p-1 rounded transition-colors cursor-pointer"
+                title="登出"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">登出</span>
+              </button>
+            </div>
+          ) : (
+            <a
+              href="/api/auth/login"
+              className="flex items-center space-x-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-lg transition-colors"
+            >
+              <Github className="w-4 h-4" />
+              <span>使用 GitHub 登入</span>
+            </a>
+          )}
         </div>
       </div>
     </header>

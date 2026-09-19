@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar.tsx';
 import { LabList } from './components/LabList.tsx';
 import { LabDetail } from './components/LabDetail.tsx';
-import { ExperimentConfig } from './types/index.ts';
+import { ExperimentConfig, AuthUser } from './types/index.ts';
 
 // 示範課程與實驗工作區資料庫
 const mockCoursesData: Record<string, ExperimentConfig[]> = {
@@ -115,6 +115,29 @@ const mockCoursesData: Record<string, ExperimentConfig[]> = {
 export const App: React.FC = () => {
   const [selectedCourse, setSelectedCourse] = useState<string>('電子學實驗');
   const [selectedLab, setSelectedLab] = useState<ExperimentConfig | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  // 初始化時呼叫 /api/auth/me 檢查目前登入身分
+  useEffect(() => {
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.authenticated && data.user) {
+          setUser(data.user);
+        } else {
+          setUser(null);
+        }
+      })
+      .catch(() => setUser(null));
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } finally {
+      setUser(null);
+    }
+  };
 
   const availableCourses = Object.keys(mockCoursesData);
   const currentExperiments = mockCoursesData[selectedCourse] || [];
@@ -130,6 +153,8 @@ export const App: React.FC = () => {
         availableCourses={availableCourses}
         activeRepo={selectedLab?.repository || null}
         onBackToHome={() => setSelectedLab(null)}
+        user={user}
+        onLogout={handleLogout}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">

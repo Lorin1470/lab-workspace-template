@@ -9,6 +9,7 @@
     "sync-skill": "node scripts/sync-skill.mjs",
     "validate": "node scripts/validate-repo.mjs",
     "test:activity": "node scripts/verify-activity-log.mjs",
+    "test:auth": "node scripts/verify-auth-session.mjs",
     "test:prod": "node scripts/smoke-test-prod.mjs",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build"

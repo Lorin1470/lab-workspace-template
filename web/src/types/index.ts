@@ -66,3 +66,10 @@ export interface CommitItem {
   date: string;
   url?: string;
 }
+
+export interface AuthUser {
+  github_id: string;
+  username: string;
+  display_name: string | null;
+  avatar_url: string | null;
+}
