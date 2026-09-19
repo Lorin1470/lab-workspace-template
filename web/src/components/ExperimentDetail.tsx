@@ -8,6 +8,8 @@ import {
   ReportMode,
   ExperimentStatus,
   CourseRole,
+  ProvisioningStatus,
+  ExperimentProvisioning,
 } from '../types/index.ts';
 import { api, ApiError } from '../api/client.ts';
 import {
@@ -29,6 +31,9 @@ import {
   ShieldCheck,
   Copy,
   Printer,
+  Clock,
+  History,
+  X,
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -119,6 +124,13 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   const [modalError, setModalError] = useState<string | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
 
+  // Provisioning 狀態與歷程控制
+  const [isProvisioning, setIsProvisioning] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [provisionHistory, setProvisionHistory] = useState<ExperimentProvisioning[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
   // 載入成員
   const loadMembers = async () => {
     setMembersLoading(true);
@@ -144,6 +156,49 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
       onError(err.message || '讀取活動日誌失敗');
     } finally {
       setLogsLoading(false);
+    }
+  };
+
+  // 載入建立歷程
+  const loadProvisionHistory = async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const data = await api.experiments.getProvisioning(experiment.id);
+      setProvisionHistory(data.history || []);
+    } catch (err: any) {
+      setHistoryError(err.message || '讀取建立紀錄失敗');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  // 觸發遠端儲存庫建立 / 重新建立
+  const handleProvision = async () => {
+    if (isProvisioning) return;
+    setIsProvisioning(true);
+    try {
+      const res = await api.experiments.provision(experiment.id);
+      if (res.experiment) {
+        onExperimentUpdated(res.experiment);
+      }
+      if (res.already_existed) {
+        onSuccess(`儲存庫 ${res.repository?.full_name || experiment.repository} 已存在，已自動連結至本專案！`);
+      } else {
+        onSuccess(`儲存庫 ${res.repository?.full_name || experiment.repository} 建立成功！`);
+      }
+      loadActivityLogs();
+    } catch (err: any) {
+      const errMsg = err.message || '儲存庫建立失敗';
+      onError(errMsg);
+      try {
+        const detail = await api.experiments.get(experiment.id);
+        if (detail.experiment) {
+          onExperimentUpdated(detail.experiment);
+        }
+      } catch {}
+    } finally {
+      setIsProvisioning(false);
     }
   };
 
@@ -287,6 +342,40 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
 
   const statusInfo = expStatusMap[experiment.status] || expStatusMap.not_started;
 
+  const renderProvisioningBadge = (status?: ProvisioningStatus) => {
+    switch (status) {
+      case 'ready':
+        return (
+          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300">
+            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+            <span>儲存庫已就緒</span>
+          </span>
+        );
+      case 'creating':
+        return (
+          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-300">
+            <RefreshCw className="w-3 h-3 text-blue-600 animate-spin" />
+            <span>儲存庫建立中</span>
+          </span>
+        );
+      case 'failed':
+        return (
+          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-rose-50 text-rose-700 border-rose-300">
+            <AlertCircle className="w-3 h-3 text-rose-600" />
+            <span>儲存庫建立失敗</span>
+          </span>
+        );
+      case 'pending':
+      default:
+        return (
+          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-300">
+            <Clock className="w-3 h-3 text-amber-600" />
+            <span>待建立儲存庫</span>
+          </span>
+        );
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* 頂部資訊列 */}
@@ -316,6 +405,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
                   {experiment.report_mode === 'shared' ? '共同報告模式' : '個別報告模式'}
                 </span>
+                {renderProvisioningBadge(experiment.provisioning_status)}
               </div>
 
               <h2 className="text-2xl font-bold text-slate-900 mt-1.5">{experiment.name}</h2>
@@ -336,31 +426,187 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center space-x-3 self-end md:self-auto">
+          <div className="flex items-center space-x-2 self-end md:self-auto flex-wrap">
             {isTeacher && (
-              <button
-                onClick={() => {
-                  setModalError(null);
-                  setIsEditExpOpen(true);
-                }}
-                className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>實驗設定</span>
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    loadProvisionHistory();
+                    setIsHistoryOpen(true);
+                  }}
+                  className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                  title="檢視 GitHub 儲存庫建立紀錄"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>建立歷程</span>
+                </button>
+
+                {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
+                  <button
+                    onClick={handleProvision}
+                    disabled={isProvisioning}
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-sm disabled:opacity-50"
+                  >
+                    <FolderGit2 className="w-3.5 h-3.5" />
+                    <span>建立 GitHub 儲存庫</span>
+                  </button>
+                )}
+
+                {(experiment.provisioning_status === 'creating' || isProvisioning) && (
+                  <button
+                    disabled
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-100 text-blue-700 px-3 py-2 rounded-lg cursor-not-allowed"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>儲存庫建立中...</span>
+                  </button>
+                )}
+
+                {experiment.provisioning_status === 'failed' && !isProvisioning && (
+                  <button
+                    onClick={handleProvision}
+                    disabled={isProvisioning}
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-sm disabled:opacity-50"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>重新建立 (Retry)</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => {
+                    setModalError(null);
+                    setIsEditExpOpen(true);
+                  }}
+                  className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>實驗設定</span>
+                </button>
+              </>
             )}
 
             <a
               href={`https://github.com/${experiment.repository}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-lg transition-colors"
+              className={`inline-flex items-center space-x-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-colors ${
+                experiment.provisioning_status === 'ready'
+                  ? 'bg-slate-900 hover:bg-slate-800 text-white'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              }`}
             >
               <ExternalLink className="w-3.5 h-3.5" />
               <span>開啟 GitHub Repo</span>
             </a>
           </div>
         </div>
+
+        {/* Provisioning 狀態看板 */}
+        {(isProvisioning || experiment.provisioning_status === 'creating') && (
+          <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between text-xs text-blue-900 animate-pulse">
+            <div className="flex items-center space-x-3">
+              <RefreshCw className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
+              <div>
+                <p className="font-bold text-sm text-blue-950">
+                  遠端儲存庫建立中 (Provisioning in progress)
+                </p>
+                <p className="text-blue-700 mt-0.5">
+                  系統正調用 GitHub App 依據官方範本 (<span className="font-mono">Lorin1470/lab-workspace-template</span>) 初始化工作區 <span className="font-mono font-semibold">{experiment.repository}</span>。此程序約需數秒，請稍候...
+                </p>
+              </div>
+            </div>
+            <div className="hidden sm:block text-right shrink-0 font-mono text-[11px] text-blue-600">
+              狀態：creating
+            </div>
+          </div>
+        )}
+
+        {experiment.provisioning_status === 'failed' && !isProvisioning && (
+          <div className="mt-4 p-4 bg-rose-50 border border-rose-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-900">
+            <div className="flex items-start space-x-3">
+              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-sm text-rose-950">
+                  遠端儲存庫建立失敗 (Provisioning Failed)
+                </p>
+                <p className="text-rose-800 mt-0.5">
+                  錯誤摘要：<span className="font-mono bg-rose-100 px-1.5 py-0.5 rounded">{experiment.provisioning_error || '建立儲存庫時發生未預期的錯誤，請確認組織權限與名稱'}</span>
+                </p>
+                <p className="text-rose-600 text-[11px] mt-1">
+                  請確認 GitHub App 是否已安裝於目標組織，或檢查儲存庫名稱是否合規。
+                </p>
+              </div>
+            </div>
+            {isTeacher && (
+              <button
+                onClick={handleProvision}
+                disabled={isProvisioning}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold transition-colors cursor-pointer shrink-0 shadow-xs"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>重新建立 (Retry)</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
+          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
+            <div className="flex items-start space-x-3">
+              <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-sm text-amber-950">
+                  尚未建立遠端儲存庫 (Pending Provisioning)
+                </p>
+                <p className="text-amber-800 mt-0.5">
+                  目標儲存庫：<span className="font-mono font-semibold">{experiment.repository}</span>。
+                  {isTeacher
+                    ? ' 授課教師可直接點擊右側按鈕，系統將自動透過 GitHub App 與官方範本初始化該儲存庫。'
+                    : ' 此實驗專案尚未在 GitHub 上初始化，請待授課教師完成遠端儲存庫建立。'}
+                </p>
+              </div>
+            </div>
+            {isTeacher && (
+              <button
+                onClick={handleProvision}
+                disabled={isProvisioning}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors cursor-pointer shrink-0 shadow-xs"
+              >
+                <FolderGit2 className="w-3.5 h-3.5" />
+                <span>建立 GitHub 儲存庫</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {experiment.provisioning_status === 'ready' && !isProvisioning && (
+          <div className="mt-4 p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-900">
+            <div className="flex items-center space-x-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <div>
+                <span className="font-bold">遠端儲存庫已就緒：</span>
+                <span className="text-emerald-800">
+                  工作區儲存庫已完成初始化。
+                  {experiment.provisioned_at && (
+                    <span className="text-emerald-700 ml-1">
+                      （就緒時間：{new Date(experiment.provisioned_at).toLocaleString()}）
+                    </span>
+                  )}
+                </span>
+              </div>
+            </div>
+            <a
+              href={`https://github.com/${experiment.repository}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center space-x-1 text-emerald-700 hover:text-emerald-900 font-semibold underline shrink-0"
+            >
+              <span>查看 GitHub 倉庫</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+        )}
 
         {/* 分頁導覽列 */}
         <div className="flex border-b border-slate-200 mt-6 -mb-6 space-x-1 overflow-x-auto">
@@ -1180,6 +1426,95 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 儲存庫建立歷程 Modal */}
+      {isHistoryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-xl w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
+                  <History className="w-5 h-5 text-blue-600" />
+                  <span>GitHub 儲存庫建立紀錄</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-mono mt-0.5">
+                  {experiment.repository} ({experiment.experiment_code})
+                </p>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={loadProvisionHistory}
+                  disabled={historyLoading}
+                  className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                  title="重新整理歷程"
+                >
+                  <RefreshCw className={`w-4 h-4 ${historyLoading ? 'animate-spin' : ''}`} />
+                </button>
+                <button
+                  onClick={() => setIsHistoryOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {historyError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{historyError}</span>
+              </div>
+            )}
+
+            {historyLoading ? (
+              <div className="flex flex-col items-center justify-center py-10 space-y-2 text-slate-400">
+                <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
+                <span className="text-xs">載入建立紀錄中...</span>
+              </div>
+            ) : provisionHistory.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 text-xs">
+                <History className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                <span>尚未有此儲存庫的建立歷程紀錄</span>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
+                {provisionHistory.map((item, idx) => (
+                  <div
+                    key={item.id || idx}
+                    className="p-3.5 rounded-lg border border-slate-200 bg-slate-50/50 space-y-1.5 text-xs"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        {renderProvisioningBadge(item.status)}
+                        <span className="font-mono text-slate-500 text-[11px]">{item.repository}</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        {new Date(item.created_at).toLocaleString()}
+                      </span>
+                    </div>
+
+                    {item.error_summary && (
+                      <div className="bg-rose-50 border border-rose-200 rounded p-2 text-[11px] text-rose-800 font-mono mt-1">
+                        錯誤摘要：{item.error_summary}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-3 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsHistoryOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
+              >
+                關閉
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -24,11 +24,108 @@ function sha256(str) {
   return crypto.createHash('sha256').update(str).digest('hex');
 }
 
+// 產生測試用 RSA 金鑰對 (PKCS#8)
+const testKeypairPkcs8 = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+});
+
+// Mock GitHub API 服務
+class MockGitHubApi {
+  constructor() {
+    this.repos = new Map();
+    this.authorizedOwner = 'example-org';
+    this.templateFail = false;
+  }
+
+  fetch = async (url, options = {}) => {
+    const urlStr = String(url);
+    const method = options.method || 'GET';
+
+    if (urlStr.includes('/access_tokens') && method === 'POST') {
+      return new Response(
+        JSON.stringify({
+          token: 'ghs_mock_token_for_frontend_test',
+          expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+        }),
+        { status: 201 }
+      );
+    }
+
+    if (urlStr.includes('/app/installations/') && method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          id: 654321,
+          account: {
+            login: this.authorizedOwner,
+            type: 'Organization',
+          },
+        }),
+        { status: 200 }
+      );
+    }
+
+    const repoMatch = urlStr.match(/\/repos\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
+    if (repoMatch && method === 'GET') {
+      const [_, owner, repoName] = repoMatch;
+      const key = `${owner.toLowerCase()}/${repoName.toLowerCase()}`;
+      if (this.repos.has(key)) {
+        return new Response(
+          JSON.stringify({
+            id: 88888,
+            name: repoName,
+            full_name: `${owner}/${repoName}`,
+            owner: { login: owner },
+            html_url: `https://github.com/${owner}/${repoName}`,
+            default_branch: 'main',
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+    }
+
+    if (urlStr.includes('/generate') && method === 'POST') {
+      if (this.templateFail) {
+        return new Response(JSON.stringify({ message: 'GitHub template instantiation failed' }), { status: 502 });
+      }
+      const body = JSON.parse(options.body || '{}');
+      const owner = body.owner || this.authorizedOwner;
+      const name = body.name;
+      const key = `${owner.toLowerCase()}/${name.toLowerCase()}`;
+      const repoData = {
+        id: 99999,
+        name,
+        full_name: `${owner}/${name}`,
+        owner: { login: owner },
+        html_url: `https://github.com/${owner}/${name}`,
+        default_branch: 'main',
+      };
+      this.repos.set(key, repoData);
+      return new Response(JSON.stringify(repoData), { status: 201 });
+    }
+
+    return new Response(JSON.stringify({ message: 'Not found' }), { status: 404 });
+  };
+}
+
+const mockGitHub = new MockGitHubApi();
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const urlStr = typeof input === 'string' ? input : (input?.url || '');
+  if (urlStr.startsWith('https://api.github.com')) {
+    return mockGitHub.fetch(input, init);
+  }
+  return originalFetch(input, init);
+};
+
 // 記憶體 D1 資料庫
 class MockFrontendD1 {
   constructor() {
     this.courses = new Map();
     this.experiments = new Map();
+    this.experimentProvisionings = new Map();
     this.courseMemberships = new Map();
     this.experimentMemberships = new Map();
     this.sessions = new Map();
@@ -132,6 +229,9 @@ class MockFrontendD1 {
               report_mode: report_mode || 'shared',
               config_version: config_version || '1.0',
               status: status || 'not_started',
+              provisioning_status: 'pending',
+              provisioning_error: null,
+              provisioned_at: null,
               created_at: created_at || new Date().toISOString(),
               updated_at: updated_at || new Date().toISOString(),
             });
@@ -153,7 +253,51 @@ class MockFrontendD1 {
                 const idx = (q.slice(0, q.indexOf('status = ?')).match(/\?/g) || []).length;
                 exp.status = binds[idx];
               }
-              exp.updated_at = new Date().toISOString();
+              if (q.includes('provisioning_status = "creating"')) {
+                exp.provisioning_status = 'creating';
+                exp.provisioning_error = null;
+                exp.updated_at = binds[0];
+              } else if (q.includes('provisioning_status = "ready"')) {
+                exp.provisioning_status = 'ready';
+                exp.provisioning_error = null;
+                exp.provisioned_at = binds[0];
+                exp.updated_at = binds[1];
+              } else if (q.includes('provisioning_status = "failed"')) {
+                exp.provisioning_status = 'failed';
+                exp.provisioning_error = binds[0];
+                exp.updated_at = binds[1];
+              } else {
+                exp.updated_at = new Date().toISOString();
+              }
+            }
+            return { success: true };
+          }
+          if (q.startsWith('INSERT INTO experiment_provisionings')) {
+            const [id, experiment_id, repository, status, created_at, updated_at] = binds;
+            this.experimentProvisionings.set(id, {
+              id,
+              experiment_id,
+              repository,
+              status,
+              error_summary: null,
+              created_at,
+              updated_at,
+            });
+            return { success: true };
+          }
+          if (q.startsWith('UPDATE experiment_provisionings SET')) {
+            const id = binds[binds.length - 1];
+            const prov = this.experimentProvisionings.get(id);
+            if (prov) {
+              if (q.includes('status = "ready"')) {
+                prov.status = 'ready';
+                prov.error_summary = null;
+                prov.updated_at = binds[0];
+              } else if (q.includes('status = "failed"')) {
+                prov.status = 'failed';
+                prov.error_summary = binds[0];
+                prov.updated_at = binds[1];
+              }
             }
             return { success: true };
           }
@@ -394,6 +538,15 @@ class MockFrontendD1 {
             }
             return { results: list.slice(-50) };
           }
+          if (q.includes('FROM experiment_provisionings WHERE experiment_id = ?')) {
+            const eid = binds[0];
+            const results = [];
+            for (const ep of this.experimentProvisionings.values()) {
+              if (ep.experiment_id === eid) results.push({ ...ep });
+            }
+            results.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+            return { results };
+          }
           return { results: [] };
         },
       }),
@@ -426,6 +579,10 @@ const mockEnv = {
   DB: mockD1,
   INITIAL_ADMIN_GITHUB_ID: '99999',
   ACTIVITY_LOG_SECRET: 'test_sec_777',
+  GITHUB_APP_ID: '123456',
+  GITHUB_APP_INSTALLATION_ID: '654321',
+  GITHUB_APP_PRIVATE_KEY: testKeypairPkcs8.privateKey,
+  GITHUB_APP_TEMPLATE_REPO: 'Lorin1470/lab-workspace-template',
 };
 
 // 輔助函式：發送 HTTP 請求
@@ -520,6 +677,7 @@ async function runFrontendIntegrationTests() {
   // -------------------------------------------------------------
   console.log('▶ [群組 1: Courses 管理與 UI 整合流程]');
   let courseId = '';
+  let expId = '';
   try {
     // 1.1 教師登入建立新課程
     const res1 = await apiRequest('/courses', {
@@ -630,7 +788,7 @@ async function runFrontendIntegrationTests() {
   // 群組 3: Experiments 建立、管理與 Regex 檢驗
   // -------------------------------------------------------------
   console.log('\n▶ [群組 3: Experiments 建立、管理與 Regex 檢驗]');
-  let expId = '';
+  expId = '';
   try {
     // 3.1 教師建立實驗專案
     const res1 = await apiRequest('/experiments', {
@@ -836,6 +994,144 @@ async function runFrontendIntegrationTests() {
     pass('課程順利切換回 Active 狀態');
   } catch (err) {
     fail('群組 6 執行失敗', err);
+  }
+
+  // -------------------------------------------------------------
+  // 群組 8: Repository Provisioning 前端整合與狀態呈現
+  // -------------------------------------------------------------
+  console.log('\n▶ [群組 8: Repository Provisioning 前端整合與狀態呈現]');
+  try {
+    // 8.1 建立前狀態檢查：實驗初始 provisioning_status 應為 pending
+    const expCheckRes = await apiRequest(`/experiments/${expId}`, { cookie: teacherCookie });
+    assert.strictEqual(expCheckRes.status, 200);
+    assert.strictEqual(expCheckRes.data.experiment.provisioning_status, 'pending');
+    pass('實驗專案建立後初始狀態為待建立 (pending)');
+
+    // 8.2 學生嘗試呼叫 POST /api/experiments/:id/provision 遭 403 阻絕 (安全邊界在後端)
+    const studProvRes = await apiRequest(`/experiments/${expId}/provision`, {
+      method: 'POST',
+      cookie: studentCookie,
+    });
+    assert.strictEqual(studProvRes.status, 403);
+    pass('學生嘗試觸發儲存庫建立遭 403 Forbidden 阻絕');
+
+    // 8.3 助教嘗試呼叫 POST /api/experiments/:id/provision 遭 403 阻絕
+    const taCookie = createTestSession('88888', 'taChen');
+    mockD1.courseMemberships.set('cm-ta', {
+      id: 'cm-ta',
+      course_id: courseId,
+      github_id: '88888',
+      username: 'taChen',
+      role: 'assistant',
+      status: 'active',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const taProvRes = await apiRequest(`/experiments/${expId}/provision`, {
+      method: 'POST',
+      cookie: taCookie,
+    });
+    assert.strictEqual(taProvRes.status, 403);
+    pass('助教嘗試觸發儲存庫建立遭 403 Forbidden 阻絕');
+
+    // 8.4 未登入呼叫 POST /api/experiments/:id/provision 遭 401 阻絕
+    const unauthProvRes = await apiRequest(`/experiments/${expId}/provision`, {
+      method: 'POST',
+    });
+    assert.strictEqual(unauthProvRes.status, 401);
+    pass('未登入使用者嘗試觸發建立遭 401 Unauthorized 阻絕');
+
+    // 8.5 存取不存在之實驗回傳 404
+    const notFoundProvRes = await apiRequest(`/experiments/nonexistent-exp/provision`, {
+      method: 'POST',
+      cookie: teacherCookie,
+    });
+    assert.strictEqual(notFoundProvRes.status, 404);
+    pass('存取不存在之實驗回傳 404 Not Found');
+
+    // 8.6 教師成功觸發建立遠端儲存庫 (回傳 200 OK, status: ready, already_existed: false)
+    const teachProvRes = await apiRequest(`/experiments/${expId}/provision`, {
+      method: 'POST',
+      cookie: teacherCookie,
+    });
+    assert.strictEqual(teachProvRes.status, 200);
+    assert.strictEqual(teachProvRes.data.success, true);
+    assert.strictEqual(teachProvRes.data.status, 'ready');
+    assert.strictEqual(teachProvRes.data.already_existed, false);
+    assert(teachProvRes.data.repository);
+    assert.strictEqual(teachProvRes.data.repository.full_name, 'example-org/physics-exp-01');
+    assert.strictEqual(teachProvRes.data.experiment.provisioning_status, 'ready');
+    assert(teachProvRes.data.experiment.provisioned_at);
+    pass('教師成功觸發儲存庫建立並更新狀態為 ready (200 OK)');
+
+    // 8.7 再次呼叫驗證冪等性 (already_existed: true, 狀態維持 ready)
+    const retryProvRes = await apiRequest(`/experiments/${expId}/provision`, {
+      method: 'POST',
+      cookie: teacherCookie,
+    });
+    assert.strictEqual(retryProvRes.status, 200);
+    assert.strictEqual(retryProvRes.data.status, 'ready');
+    assert.strictEqual(retryProvRes.data.already_existed, true);
+    pass('重複呼叫驗證冪等性 (already_existed: true, 狀態維持 ready)');
+
+    // 8.8 教師查詢 GET /api/experiments/:id/provision 檢視建立歷程
+    const histRes = await apiRequest(`/experiments/${expId}/provision`, {
+      cookie: teacherCookie,
+    });
+    assert.strictEqual(histRes.status, 200);
+    assert.strictEqual(histRes.data.provisioning_status, 'ready');
+    assert(Array.isArray(histRes.data.history));
+    assert(histRes.data.history.length >= 1);
+    assert.strictEqual(histRes.data.history[0].status, 'ready');
+    pass('教師成功查詢儲存庫建立歷程 (history.length >= 1)');
+
+    // 8.9 外部成員 (非課程成員) 查詢 GET /api/experiments/:id/provision 回傳 404 存在性遮蔽
+    const outsiderHistRes = await apiRequest(`/experiments/${expId}/provision`, {
+      cookie: otherStudentCookie,
+    });
+    assert.strictEqual(outsiderHistRes.status, 404);
+    pass('非課程成員查詢建立歷程回傳 404 存在性遮蔽');
+
+    // 8.10 模擬 GitHub 故障場景：建立新實驗後觸發建立失敗，驗證 failed 狀態與安全錯誤摘要
+    const exp2Create = await apiRequest('/experiments', {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: {
+        course_id: courseId,
+        experiment_code: 'exp-02',
+        name: '邁克生干涉儀實驗',
+        repository: 'example-org/physics-exp-02',
+      },
+    });
+    assert.strictEqual(exp2Create.status, 201);
+    const exp2Id = exp2Create.data.experiment.id;
+
+    // 啟用 GitHub API 錯誤模擬
+    mockGitHub.templateFail = true;
+    const failProvRes = await apiRequest(`/experiments/${exp2Id}/provision`, {
+      method: 'POST',
+      cookie: teacherCookie,
+    });
+    assert.strictEqual(failProvRes.status, 502);
+    assert.strictEqual(failProvRes.data.status, 'failed');
+    assert(failProvRes.data.error.includes('GitHub API') || failProvRes.data.error.includes('error'));
+    // 驗證安全錯誤訊息：不可包含 Private Key 或 Token
+    assert(!JSON.stringify(failProvRes.data).includes('PRIVATE KEY'));
+    assert(!JSON.stringify(failProvRes.data).includes('ghs_mock'));
+    pass('GitHub 失敗場景回傳 502/failed 且未洩漏私鑰或 Token');
+
+    // 8.11 故障排除後重試 (Retry)：解除故障模擬，重新呼叫後成功轉為 ready
+    mockGitHub.templateFail = false;
+    const recoverProvRes = await apiRequest(`/experiments/${exp2Id}/provision`, {
+      method: 'POST',
+      cookie: teacherCookie,
+    });
+    assert.strictEqual(recoverProvRes.status, 200);
+    assert.strictEqual(recoverProvRes.data.status, 'ready');
+    assert.strictEqual(recoverProvRes.data.experiment.provisioning_status, 'ready');
+    pass('重試 (Retry) 流程成功從 failed 復原為 ready (200 OK)');
+  } catch (err) {
+    fail('群組 8 執行失敗', err);
   }
 
   // -------------------------------------------------------------

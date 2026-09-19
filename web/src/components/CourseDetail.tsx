@@ -277,6 +277,35 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
     }
   };
 
+  const renderProvBadge = (status?: string) => {
+    switch (status) {
+      case 'ready':
+        return (
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+            Repo 就緒
+          </span>
+        );
+      case 'creating':
+        return (
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+            Repo 建立中
+          </span>
+        );
+      case 'failed':
+        return (
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">
+            Repo 失敗
+          </span>
+        );
+      default:
+        return (
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+            待建 Repo
+          </span>
+        );
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* 頂部資訊列 */}
@@ -424,9 +453,12 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   >
                     <div>
                       <div className="flex items-center justify-between mb-2.5">
-                        <span className="text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-mono">
-                          {exp.experiment_code}
-                        </span>
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-mono">
+                            {exp.experiment_code}
+                          </span>
+                          {renderProvBadge(exp.provisioning_status)}
+                        </div>
                         <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${statusInfo.badgeClass}`}>
                           {statusInfo.icon} {statusInfo.label}
                         </span>
@@ -726,7 +758,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   required
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
-                  一節課一 Repo 唯一綁定，不自動 provisioning，請填寫預計之 repo 名稱。
+                  一節課一 Repo 唯一綁定。建立實驗後，教師可於實驗詳情頁一鍵透過 GitHub App 初始化遠端儲存庫。
                 </p>
               </div>
 
