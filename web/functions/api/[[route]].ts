@@ -3,12 +3,23 @@
  * 處理活動紀錄 (D1) 存取、身分驗證與真實性規則檢驗
  */
 
+import {
+  provisionRepository,
+  sanitizeErrorMessage,
+} from './services/provisioning.ts';
+
 interface Env {
   DB?: any;
   ACTIVITY_LOG_SECRET?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   INITIAL_ADMIN_GITHUB_ID?: string;
+  GITHUB_APP_ID?: string | number;
+  GITHUB_APP_INSTALLATION_ID?: string | number;
+  GITHUB_APP_PRIVATE_KEY?: string;
+  GITHUB_APP_TARGET_OWNER?: string;
+  GITHUB_TEMPLATE_REPO?: string;
+  FETCH?: typeof fetch;
 }
 
 // 雜湊 Session Token (SHA-256)
@@ -1845,7 +1856,233 @@ export const onRequest = async (context: any) => {
       return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
     }
 
-    // 4.9 舊版 /api/members 相容查詢端點
+    // 4.9 實驗儲存庫自動建立與狀態查詢 (POST /api/experiments/:id/provision, GET /api/experiments/:id/provision)
+    const expProvisionMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/provision$/);
+    if (expProvisionMatch) {
+      const expId = expProvisionMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT * FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      if (request.method === 'GET') {
+        const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+        if (!perm.allowed) {
+          return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
+        }
+
+        let history: any[] = [];
+        try {
+          const histRes = await env.DB.prepare(
+            'SELECT id, repository, status, error_summary, created_at, updated_at FROM experiment_provisionings WHERE experiment_id = ? ORDER BY created_at DESC LIMIT 10'
+          ).bind(expId).all();
+          history = histRes?.results || [];
+        } catch (_err) {}
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            experiment_id: exp.id,
+            repository: exp.repository,
+            provisioning_status: exp.provisioning_status || 'ready',
+            provisioning_error: exp.provisioning_error || null,
+            provisioned_at: exp.provisioned_at || null,
+            history,
+          }),
+          { status: 200, headers }
+        );
+      }
+
+      if (request.method === 'POST') {
+        // 檢查操作者是否為該課程 Teacher
+        const isTeacher = await isCourseTeacher(env, exp.course_id, sessionUser.github_id);
+        if (!isTeacher) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course teachers can provision repositories' }), { status: 403, headers });
+        }
+
+        // 檢查課程狀態是否為 active
+        const course: any = await safeD1First(env.DB.prepare('SELECT id, status FROM courses WHERE id = ?').bind(exp.course_id));
+        if (!course || course.status !== 'active') {
+          return new Response(JSON.stringify({ error: `Cannot provision repository in a ${course?.status || 'non-active'} course` }), { status: 400, headers });
+        }
+
+        // 防重入：若目前處於 creating 狀態且在 2 分鐘以內，阻擋並回傳 409 Conflict
+        if (exp.provisioning_status === 'creating') {
+          const lastUpdate = new Date(exp.updated_at).getTime();
+          if (Date.now() - lastUpdate < 2 * 60 * 1000) {
+            return new Response(
+              JSON.stringify({ error: 'Conflict: Repository provisioning is already in progress. Please wait.', status: 'creating' }),
+              { status: 409, headers }
+            );
+          }
+        }
+
+        const nowIso = new Date().toISOString();
+        const provId = `prov_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+
+        // 更新狀態為 creating
+        await env.DB.prepare(
+          'UPDATE experiments SET provisioning_status = "creating", provisioning_error = NULL, updated_at = ? WHERE id = ?'
+        ).bind(nowIso, expId).run();
+
+        try {
+          await env.DB.prepare(
+            'INSERT INTO experiment_provisionings (id, experiment_id, repository, status, created_at, updated_at) VALUES (?, ?, ?, "creating", ?, ?)'
+          ).bind(provId, expId, exp.repository, nowIso, nowIso).run();
+        } catch (_err) {}
+
+        // 寫入 Activity Log (provisioning_started)
+        try {
+          const startLogId = crypto.randomUUID();
+          await env.DB.prepare(
+            `INSERT INTO activity_logs (
+              id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
+              actor_avatar, requested_by, approved_by, approval_status, action, summary, commit_sha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            startLogId,
+            exp.repository,
+            exp.experiment_code,
+            nowIso,
+            'web',
+            sessionUser.username,
+            sessionUser.display_name || sessionUser.username,
+            sessionUser.avatar_url || null,
+            sessionUser.username,
+            sessionUser.username,
+            'approved',
+            'provisioning_started',
+            `開始建立實驗儲存庫: ${exp.repository}`,
+            null
+          ).run();
+        } catch (_e) {}
+
+        // 呼叫 Provisioning Service
+        const provResult = await provisionRepository(
+          env,
+          exp.repository,
+          `Lab workspace for ${exp.experiment_code}: ${exp.name}`,
+          env.FETCH || fetch
+        );
+
+        if (provResult.success) {
+          const doneIso = new Date().toISOString();
+          await env.DB.prepare(
+            'UPDATE experiments SET provisioning_status = "ready", provisioning_error = NULL, provisioned_at = ?, updated_at = ? WHERE id = ?'
+          ).bind(doneIso, doneIso, expId).run();
+
+          try {
+            await env.DB.prepare(
+              'UPDATE experiment_provisionings SET status = "ready", error_summary = NULL, updated_at = ? WHERE id = ?'
+            ).bind(doneIso, provId).run();
+          } catch (_err) {}
+
+          // 寫入 Activity Log (provisioning_completed)
+          try {
+            const logId = crypto.randomUUID();
+            await env.DB.prepare(
+              `INSERT INTO activity_logs (
+                id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
+                actor_avatar, requested_by, approved_by, approval_status, action, summary, commit_sha
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              logId,
+              exp.repository,
+              exp.experiment_code,
+              doneIso,
+              'web',
+              sessionUser.username,
+              sessionUser.display_name || sessionUser.username,
+              sessionUser.avatar_url || null,
+              sessionUser.username,
+              sessionUser.username,
+              'approved',
+              'provisioning_completed',
+              `成功建立實驗儲存庫: ${exp.repository}`,
+              null
+            ).run();
+          } catch (_e) {}
+
+          const updatedExp: any = await safeD1First(env.DB.prepare('SELECT * FROM experiments WHERE id = ?').bind(expId));
+          return new Response(
+            JSON.stringify({
+              success: true,
+              status: 'ready',
+              already_existed: provResult.already_existed || false,
+              repository: provResult.repository,
+              experiment: updatedExp,
+              message: provResult.already_existed ? 'Repository already exists and is verified' : 'Repository provisioned successfully',
+            }),
+            { status: 200, headers }
+          );
+        } else {
+          const failIso = new Date().toISOString();
+          const sanitizedErr = sanitizeErrorMessage(provResult.error || 'Provisioning failed');
+
+          await env.DB.prepare(
+            'UPDATE experiments SET provisioning_status = "failed", provisioning_error = ?, updated_at = ? WHERE id = ?'
+          ).bind(sanitizedErr, failIso, expId).run();
+
+          try {
+            await env.DB.prepare(
+              'UPDATE experiment_provisionings SET status = "failed", error_summary = ?, updated_at = ? WHERE id = ?'
+            ).bind(sanitizedErr, failIso, provId).run();
+          } catch (_err) {}
+
+          // 寫入 Activity Log (provisioning_failed)
+          try {
+            const logId = crypto.randomUUID();
+            await env.DB.prepare(
+              `INSERT INTO activity_logs (
+                id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
+                actor_avatar, requested_by, approved_by, approval_status, action, summary, commit_sha
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              logId,
+              exp.repository,
+              exp.experiment_code,
+              failIso,
+              'web',
+              sessionUser.username,
+              sessionUser.display_name || sessionUser.username,
+              sessionUser.avatar_url || null,
+              sessionUser.username,
+              null,
+              'rejected',
+              'provisioning_failed',
+              `儲存庫建立失敗: ${sanitizedErr}`,
+              null
+            ).run();
+          } catch (_e) {}
+
+          const isValidationErr =
+            sanitizedErr.includes('Invalid repository format') ||
+            sanitizedErr.includes('not authorized') ||
+            sanitizedErr.includes('not configured');
+
+          return new Response(
+            JSON.stringify({
+              success: false,
+              status: 'failed',
+              error: sanitizedErr,
+            }),
+            { status: isValidationErr ? 400 : 502, headers }
+          );
+        }
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.10 舊版 /api/members 相容查詢端點
     if (path === 'members') {
       const sessionUser = await getSessionUser(request, env);
       if (!sessionUser) {

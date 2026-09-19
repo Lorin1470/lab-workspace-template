@@ -15,6 +15,7 @@ import {
   ActivityLogItem,
   CourseRole,
   ReportMode,
+  ProvisionExperimentResponse,
 } from '../types/index.ts';
 
 export class ApiError extends Error {
@@ -174,6 +175,28 @@ export const api = {
         }
       );
       return res.experiment;
+    },
+    provision: async (id: string): Promise<ProvisionExperimentResponse> => {
+      return await request<ProvisionExperimentResponse>(
+        `/api/experiments/${encodeURIComponent(id)}/provision`,
+        { method: 'POST' }
+      );
+    },
+    getProvisioning: async (
+      id: string
+    ): Promise<{
+      success: boolean;
+      experiment_id: string;
+      repository: string;
+      provisioning_status: string;
+      provisioning_error: string | null;
+      provisioned_at: string | null;
+      history: any[];
+    }> => {
+      return await request(
+        `/api/experiments/${encodeURIComponent(id)}/provision`,
+        { method: 'GET' }
+      );
     },
   },
 

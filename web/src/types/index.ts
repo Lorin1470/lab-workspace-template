@@ -140,6 +140,35 @@ export interface UpdateExperimentMemberRequest {
   role?: 'student' | 'assistant';
 }
 
+export type ProvisioningStatus = 'pending' | 'creating' | 'ready' | 'failed';
+
+export interface ExperimentProvisioning {
+  id: string;
+  experiment_id: string;
+  repository: string;
+  status: ProvisioningStatus;
+  error_summary?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProvisionExperimentResponse {
+  success: boolean;
+  status: ProvisioningStatus;
+  already_existed?: boolean;
+  message?: string;
+  repository?: {
+    owner: string;
+    name: string;
+    full_name: string;
+    html_url: string;
+    default_branch: string;
+  };
+  experiment?: Experiment;
+  error?: string;
+  details?: string;
+}
+
 export interface Experiment {
   id: string;
   course_id: string;
@@ -149,6 +178,9 @@ export interface Experiment {
   report_mode: ReportMode;
   config_version: string;
   status: ExperimentStatus;
+  provisioning_status?: ProvisioningStatus;
+  provisioning_error?: string | null;
+  provisioned_at?: string | null;
   created_at: string;
   updated_at: string;
   group_name?: string | null;

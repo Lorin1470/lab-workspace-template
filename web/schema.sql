@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS experiments (
     report_mode TEXT NOT NULL DEFAULT 'shared' CHECK(report_mode IN ('shared', 'separate')),
     config_version TEXT NOT NULL DEFAULT '1.0',
     status TEXT NOT NULL DEFAULT 'not_started' CHECK(status IN ('not_started', 'in_progress', 'data_processing', 'report_writing', 'completed')),
+    provisioning_status TEXT NOT NULL DEFAULT 'pending' CHECK(provisioning_status IN ('pending', 'creating', 'ready', 'failed')),
+    provisioning_error TEXT,
+    provisioned_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(course_id, experiment_code)
@@ -73,6 +76,20 @@ CREATE TABLE IF NOT EXISTS experiments (
 
 CREATE INDEX IF NOT EXISTS idx_experiments_repo ON experiments(repository);
 CREATE INDEX IF NOT EXISTS idx_experiments_course ON experiments(course_id);
+
+-- 2.1 實驗儲存庫建立歷程與稽核表 (experiment_provisionings)
+CREATE TABLE IF NOT EXISTS experiment_provisionings (
+    id TEXT PRIMARY KEY,                       -- 系統 UUID (例如 "prov_...")
+    experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    repository TEXT NOT NULL,                  -- 目標 GitHub Repo 全名
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'creating', 'ready', 'failed')),
+    error_summary TEXT,                        -- 失敗摘要 (絕不包含 Secret)
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_exp_prov_exp_id ON experiment_provisionings(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_exp_prov_repo ON experiment_provisionings(repository);
 
 -- 3. 課程成員表 (course_memberships)
 -- Course 角色唯一權威來源 (teacher, assistant, student)
