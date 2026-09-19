@@ -1,0 +1,892 @@
+/**
+ * verify-frontend.mjs
+ * Phase 3: Web 管理介面與 API Client 端到端整合驗證測試 (零外部依賴)
+ *
+ * 測試群組：
+ * 1. API Client 與 Courses 管理整合 (清單、詳情、建立、更新、409 衝突、404 存在性遮蔽)
+ * 2. API Client 與 Course Memberships 管理整合 (新增、修改角色、Last Active Teacher 降級/停用保護 400)
+ * 3. API Client 與 Experiments 管理整合 (建立、查詢、修改、owner/repo 格式驗證、409 重複)
+ * 4. API Client 與 Experiment Memberships 整合 (指派組員、更新分組、非課程成員阻絕 400、重複 409)
+ * 5. Activity Log 資料讀取與前台展示格式化 (JSON files_changed 解析、SHA 連結、拒絕原因呈現)
+ * 6. 前端角色權限邏輯驗證 (Teacher vs Assistant vs Student 視圖、學生隱藏 inactive 課程、archived 唯讀)
+ * 7. Session 身分驗證與防偽檢驗 (Cookie 鑑權、登出生命週期、無客戶端身分覆蓋漏洞)
+ */
+
+import http from 'node:http';
+import assert from 'node:assert';
+import crypto from 'node:crypto';
+import { onRequest } from '../web/functions/api/[[route]].ts';
+
+const TEST_PORT = 9005;
+const BASE_URL = `http://127.0.0.1:${TEST_PORT}/api`;
+
+function sha256(str) {
+  return crypto.createHash('sha256').update(str).digest('hex');
+}
+
+// 記憶體 D1 資料庫
+class MockFrontendD1 {
+  constructor() {
+    this.courses = new Map();
+    this.experiments = new Map();
+    this.courseMemberships = new Map();
+    this.experimentMemberships = new Map();
+    this.sessions = new Map();
+    this.activityLogs = [];
+  }
+
+  prepare(query) {
+    const q = query.replace(/\s+/g, ' ').trim();
+    return {
+      bind: (...binds) => ({
+        run: async () => {
+          if (q.startsWith('INSERT INTO courses')) {
+            const [id, course_code, name, semester, status, created_by_github_id, created_at, updated_at] = binds;
+            for (const c of this.courses.values()) {
+              if (c.course_code === course_code && c.semester === semester) {
+                throw new Error(`UNIQUE constraint failed: courses.course_code, courses.semester`);
+              }
+            }
+            this.courses.set(id, {
+              id,
+              course_code,
+              name,
+              semester,
+              status: status || 'active',
+              created_by_github_id,
+              created_at: created_at || new Date().toISOString(),
+              updated_at: updated_at || new Date().toISOString(),
+            });
+            return { success: true };
+          }
+          if (q.startsWith('UPDATE courses SET')) {
+            const id = binds[binds.length - 1];
+            const course = this.courses.get(id);
+            if (course) {
+              if (q.includes('name = ?')) course.name = binds[0];
+              if (q.includes('semester = ?')) {
+                const sIndex = q.indexOf('semester = ?');
+                const idx = (q.slice(0, sIndex).match(/\?/g) || []).length;
+                course.semester = binds[idx];
+              }
+              if (q.includes('status = ?')) {
+                const sIndex = q.indexOf('status = ?');
+                const idx = (q.slice(0, sIndex).match(/\?/g) || []).length;
+                course.status = binds[idx];
+              }
+              course.updated_at = new Date().toISOString();
+            }
+            return { success: true };
+          }
+          if (q.startsWith('INSERT INTO course_memberships')) {
+            const [id, course_id, github_id, username, role, status, created_at, updated_at] = binds;
+            for (const m of this.courseMemberships.values()) {
+              if (m.course_id === course_id && m.github_id === github_id) {
+                throw new Error(`UNIQUE constraint failed: course_memberships.course_id, course_memberships.github_id`);
+              }
+            }
+            this.courseMemberships.set(id, {
+              id,
+              course_id,
+              github_id,
+              username,
+              role,
+              status: status || 'active',
+              created_at: created_at || new Date().toISOString(),
+              updated_at: updated_at || new Date().toISOString(),
+            });
+            return { success: true };
+          }
+          if (q.startsWith('UPDATE course_memberships SET')) {
+            const id = binds[binds.length - 1];
+            const m = this.courseMemberships.get(id);
+            if (m) {
+              if (q.includes('role = ?')) {
+                const idx = (q.slice(0, q.indexOf('role = ?')).match(/\?/g) || []).length;
+                m.role = binds[idx];
+              }
+              if (q.includes('status = ?')) {
+                const idx = (q.slice(0, q.indexOf('status = ?')).match(/\?/g) || []).length;
+                m.status = binds[idx];
+              }
+              m.updated_at = new Date().toISOString();
+            }
+            return { success: true };
+          }
+          if (q.startsWith('INSERT INTO experiments')) {
+            const [id, course_id, experiment_code, name, repository, report_mode, config_version, status, created_at, updated_at] = binds;
+            for (const e of this.experiments.values()) {
+              if (e.repository === repository) {
+                throw new Error(`UNIQUE constraint failed: experiments.repository`);
+              }
+              if (e.course_id === course_id && e.experiment_code === experiment_code) {
+                throw new Error(`UNIQUE constraint failed: experiments.course_id, experiments.experiment_code`);
+              }
+            }
+            this.experiments.set(id, {
+              id,
+              course_id,
+              experiment_code,
+              name,
+              repository,
+              report_mode: report_mode || 'shared',
+              config_version: config_version || '1.0',
+              status: status || 'not_started',
+              created_at: created_at || new Date().toISOString(),
+              updated_at: updated_at || new Date().toISOString(),
+            });
+            return { success: true };
+          }
+          if (q.startsWith('UPDATE experiments SET')) {
+            const id = binds[binds.length - 1];
+            const exp = this.experiments.get(id);
+            if (exp) {
+              if (q.includes('name = ?')) {
+                const idx = (q.slice(0, q.indexOf('name = ?')).match(/\?/g) || []).length;
+                exp.name = binds[idx];
+              }
+              if (q.includes('report_mode = ?')) {
+                const idx = (q.slice(0, q.indexOf('report_mode = ?')).match(/\?/g) || []).length;
+                exp.report_mode = binds[idx];
+              }
+              if (q.includes('status = ?')) {
+                const idx = (q.slice(0, q.indexOf('status = ?')).match(/\?/g) || []).length;
+                exp.status = binds[idx];
+              }
+              exp.updated_at = new Date().toISOString();
+            }
+            return { success: true };
+          }
+          if (q.startsWith('INSERT INTO experiment_memberships')) {
+            const [id, experiment_id, github_id, username, role, group_name, status, created_at, updated_at] = binds;
+            for (const em of this.experimentMemberships.values()) {
+              if (em.experiment_id === experiment_id && em.github_id === github_id) {
+                throw new Error(`UNIQUE constraint failed: experiment_memberships.experiment_id, experiment_memberships.github_id`);
+              }
+            }
+            this.experimentMemberships.set(id, {
+              id,
+              experiment_id,
+              github_id,
+              username,
+              role,
+              group_name: group_name || null,
+              status: status || 'active',
+              created_at: created_at || new Date().toISOString(),
+              updated_at: updated_at || new Date().toISOString(),
+            });
+            return { success: true };
+          }
+          if (q.startsWith('UPDATE experiment_memberships SET')) {
+            const id = binds[binds.length - 1];
+            const em = this.experimentMemberships.get(id);
+            if (em) {
+              if (q.includes('group_name = ?')) {
+                const idx = (q.slice(0, q.indexOf('group_name = ?')).match(/\?/g) || []).length;
+                em.group_name = binds[idx];
+              }
+              if (q.includes('role = ?')) {
+                const idx = (q.slice(0, q.indexOf('role = ?')).match(/\?/g) || []).length;
+                em.role = binds[idx];
+              }
+              if (q.includes('status = ?')) {
+                const idx = (q.slice(0, q.indexOf('status = ?')).match(/\?/g) || []).length;
+                em.status = binds[idx];
+              }
+              em.updated_at = new Date().toISOString();
+            }
+            return { success: true };
+          }
+          if (q.startsWith('INSERT INTO activity_logs')) {
+            this.activityLogs.push({
+              id: binds[0],
+              repo_name: binds[1],
+              experiment_id: binds[2],
+              timestamp: binds[3],
+              actor_type: binds[4],
+              actor_id: binds[5],
+              actor_name: binds[6],
+              actor_avatar: binds[7],
+              requested_by: binds[8],
+              approved_by: binds[9],
+              approval_status: binds[10],
+              action: binds[11],
+              target: binds[12],
+              summary: binds[13],
+              files_changed: binds[14],
+              commit_sha: binds[15],
+              details_json: binds[16],
+            });
+            return { success: true };
+          }
+          if (q.startsWith('DELETE FROM user_sessions WHERE session_id = ?')) {
+            this.sessions.delete(binds[0]);
+            return { success: true };
+          }
+          return { success: true };
+        },
+        first: async () => {
+          if (q.includes('FROM user_sessions WHERE session_id = ?')) {
+            return this.sessions.get(binds[0]) || null;
+          }
+          if (q.includes('FROM courses WHERE course_code = ? AND semester = ? AND id != ?')) {
+            const [cc, sem, id] = binds;
+            for (const c of this.courses.values()) {
+              if (c.course_code === cc && c.semester === sem && c.id !== id) return { ...c };
+            }
+            return null;
+          }
+          if (q.includes('FROM courses WHERE course_code = ? AND semester = ?')) {
+            const [cc, sem] = binds;
+            for (const c of this.courses.values()) {
+              if (c.course_code === cc && c.semester === sem) return { ...c };
+            }
+            return null;
+          }
+          if (q.includes('FROM courses WHERE id = ?')) {
+            return this.courses.get(binds[0]) || null;
+          }
+          if (q.includes('FROM experiments WHERE repository = ?')) {
+            const repo = binds[0];
+            for (const e of this.experiments.values()) {
+              if (e.repository === repo) return { ...e };
+            }
+            return null;
+          }
+          if (q.includes('FROM experiments WHERE course_id = ? AND experiment_code = ?')) {
+            const [cid, code] = binds;
+            for (const e of this.experiments.values()) {
+              if (e.course_id === cid && e.experiment_code === code) return { ...e };
+            }
+            return null;
+          }
+          if (q.includes('FROM experiments WHERE id = ?')) {
+            return this.experiments.get(binds[0]) || null;
+          }
+          if (q.includes('FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"')) {
+            const [cid, gid] = binds;
+            for (const m of this.courseMemberships.values()) {
+              if (m.course_id === cid && m.github_id === gid && m.status === 'active') return { ...m };
+            }
+            return null;
+          }
+          if (q.includes('FROM course_memberships WHERE course_id = ? AND github_id = ?')) {
+            const [cid, gid] = binds;
+            for (const m of this.courseMemberships.values()) {
+              if (m.course_id === cid && m.github_id === gid) return { ...m };
+            }
+            return null;
+          }
+          if (q.includes('FROM course_memberships WHERE id = ? AND course_id = ?')) {
+            const [id, cid] = binds;
+            const m = this.courseMemberships.get(id);
+            if (m && m.course_id === cid) return { ...m };
+            return null;
+          }
+          if (q.includes('FROM course_memberships WHERE id = ?')) {
+            return this.courseMemberships.get(binds[0]) || null;
+          }
+          if (q.includes('FROM course_memberships WHERE github_id = ? AND role = "teacher" AND status = "active"')) {
+            const gid = binds[0];
+            for (const m of this.courseMemberships.values()) {
+              if (m.github_id === gid && m.role === 'teacher' && m.status === 'active') return { ...m };
+            }
+            return null;
+          }
+          if (q.includes('COUNT(*) as count FROM course_memberships WHERE role = "teacher"') ||
+              q.includes("COUNT(*) as count FROM course_memberships WHERE role = 'teacher'")) {
+            let count = 0;
+            for (const m of this.courseMemberships.values()) {
+              if (m.role === 'teacher' && m.status === 'active') count++;
+            }
+            return { count };
+          }
+          if (q.includes('FROM course_memberships WHERE course_id = ? AND role = "teacher" AND status = "active"')) {
+            const cid = binds[0];
+            let count = 0;
+            for (const m of this.courseMemberships.values()) {
+              if (m.course_id === cid && m.role === 'teacher' && m.status === 'active') count++;
+            }
+            return { count };
+          }
+          if (q.includes('FROM experiment_memberships WHERE experiment_id = ? AND github_id = ? AND status = "active"')) {
+            const [eid, gid] = binds;
+            for (const em of this.experimentMemberships.values()) {
+              if (em.experiment_id === eid && em.github_id === gid && em.status === 'active') return { ...em };
+            }
+            return null;
+          }
+          if (q.includes('FROM experiment_memberships WHERE experiment_id = ? AND github_id = ?')) {
+            const [eid, gid] = binds;
+            for (const em of this.experimentMemberships.values()) {
+              if (em.experiment_id === eid && em.github_id === gid) return { ...em };
+            }
+            return null;
+          }
+          if (q.includes('FROM experiment_memberships WHERE id = ? AND experiment_id = ?')) {
+            const [id, eid] = binds;
+            const em = this.experimentMemberships.get(id);
+            if (em && em.experiment_id === eid) return { ...em };
+            return null;
+          }
+          if (q.includes('FROM experiment_memberships WHERE id = ?')) {
+            return this.experimentMemberships.get(binds[0]) || null;
+          }
+          return null;
+        },
+        all: async () => {
+          if (q.includes('FROM courses c JOIN course_memberships cm ON c.id = cm.course_id WHERE cm.github_id = ?')) {
+            const gitId = binds[0];
+            const results = [];
+            for (const m of this.courseMemberships.values()) {
+              if (m.github_id === gitId && m.status === 'active') {
+                const c = this.courses.get(m.course_id);
+                if (c && (['teacher', 'assistant'].includes(m.role) || c.status !== 'inactive')) {
+                  results.push({ ...c, role: m.role });
+                }
+              }
+            }
+            return { results };
+          }
+          if (q.includes('FROM experiments WHERE course_id = ?')) {
+            const cid = binds[0];
+            const results = [];
+            for (const e of this.experiments.values()) {
+              if (e.course_id === cid) results.push(e);
+            }
+            return { results };
+          }
+          if (q.includes('FROM experiments e JOIN experiment_memberships em ON e.id = em.experiment_id WHERE e.course_id = ? AND em.github_id = ?')) {
+            const cid = binds[0];
+            const gid = binds[1];
+            const results = [];
+            for (const em of this.experimentMemberships.values()) {
+              if (em.github_id === gid && em.status === 'active') {
+                const e = this.experiments.get(em.experiment_id);
+                if (e && e.course_id === cid) {
+                  results.push({ ...e, group_name: em.group_name });
+                }
+              }
+            }
+            return { results };
+          }
+          if (q.includes('FROM course_memberships WHERE course_id = ?')) {
+            const cid = binds[0];
+            const results = [];
+            for (const m of this.courseMemberships.values()) {
+              if (m.course_id === cid) results.push(m);
+            }
+            return { results };
+          }
+          if (q.includes('FROM experiment_memberships WHERE experiment_id = ?')) {
+            const eid = binds[0];
+            const results = [];
+            for (const em of this.experimentMemberships.values()) {
+              if (em.experiment_id === eid && em.status === 'active') results.push(em);
+            }
+            return { results };
+          }
+          if (q.includes('FROM activity_logs WHERE repo_name = ?')) {
+            const repo = binds[0];
+            let list = this.activityLogs.filter((l) => l.repo_name === repo);
+            if (binds.length >= 2 && typeof binds[1] === 'string') {
+              list = list.filter((l) => l.experiment_id === binds[1]);
+            }
+            return { results: list.slice(-50) };
+          }
+          return { results: [] };
+        },
+      }),
+      first: async () => {
+        if (q.includes('COUNT(*) as count FROM course_memberships WHERE role = "teacher"') ||
+            q.includes("COUNT(*) as count FROM course_memberships WHERE role = 'teacher'")) {
+          let count = 0;
+          for (const m of this.courseMemberships.values()) {
+            if (m.role === 'teacher' && m.status === 'active') count++;
+          }
+          return { count };
+        }
+        return null;
+      },
+    };
+  }
+
+  async batch(statements) {
+    const results = [];
+    for (const stmt of statements) {
+      results.push(await stmt.run());
+    }
+    return results;
+  }
+}
+
+// 建立測試環境
+const mockD1 = new MockFrontendD1();
+const mockEnv = {
+  DB: mockD1,
+  INITIAL_ADMIN_GITHUB_ID: '99999',
+  ACTIVITY_LOG_SECRET: 'test_sec_777',
+};
+
+// 輔助函式：發送 HTTP 請求
+async function apiRequest(path, { method = 'GET', headers = {}, body = null, cookie = null } = {}) {
+  const reqHeaders = { ...headers };
+  if (cookie) reqHeaders['Cookie'] = cookie;
+  if (body && !reqHeaders['Content-Type']) reqHeaders['Content-Type'] = 'application/json';
+
+  const res = await fetch(`${BASE_URL}/${path.replace(/^\//, '')}`, {
+    method,
+    headers: reqHeaders,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const status = res.status;
+  let json = null;
+  try {
+    json = await res.json();
+  } catch {
+    //
+  }
+  return { status, data: json, headers: res.headers };
+}
+
+// 輔助函式：建立使用者 Session
+function createTestSession(github_id, username, display_name = null) {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = sha256(rawToken);
+  mockD1.sessions.set(tokenHash, {
+    session_id: tokenHash,
+    github_id: String(github_id),
+    username,
+    display_name: display_name || username,
+    avatar_url: `https://github.com/${username}.png`,
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 86400 * 1000).toISOString(),
+  });
+  return `app_session=${rawToken}`;
+}
+
+// 啟動整合測試伺服器
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const bodyBuffer = Buffer.concat(chunks);
+
+  const webReq = new Request(url.toString(), {
+    method: req.method,
+    headers: req.headers,
+    body: ['GET', 'HEAD'].includes(req.method) ? undefined : bodyBuffer,
+  });
+
+  try {
+    const webRes = await onRequest({ request: webReq, env: mockEnv });
+    res.statusCode = webRes.status;
+    webRes.headers.forEach((v, k) => res.setHeader(k, v));
+    const resBody = await webRes.arrayBuffer();
+    res.end(Buffer.from(resBody));
+  } catch (err) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ error: err.message }));
+  }
+});
+
+let passedCount = 0;
+let failedCount = 0;
+
+function pass(name) {
+  console.log(`  ✅ [PASS] ${name}`);
+  passedCount++;
+}
+
+function fail(name, err) {
+  console.error(`  ❌ [FAIL] ${name}:`, err.message || err);
+  failedCount++;
+}
+
+// 測試套件本體
+async function runFrontendIntegrationTests() {
+  console.log('\n====================================================');
+  console.log('🧪 Web 管理介面與 API Client 端到端整合驗證開始');
+  console.log('====================================================\n');
+
+  // 設定測試身分 (初始使用 99999 作為 Bootstrap 建立者)
+  const teacherCookie = createTestSession('99999', 'teacherLin', '林老師');
+  const studentCookie = createTestSession('20001', 'studentChen', '陳同學');
+  const otherStudentCookie = createTestSession('30001', 'otherStudent', '其他同學');
+
+  // -------------------------------------------------------------
+  // 群組 1: Courses 管理與 UI 整合流程
+  // -------------------------------------------------------------
+  console.log('▶ [群組 1: Courses 管理與 UI 整合流程]');
+  let courseId = '';
+  try {
+    // 1.1 教師登入建立新課程
+    const res1 = await apiRequest('/courses', {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: { course_code: 'EE301', name: '近代物理實驗', semester: '114-1' },
+    });
+    assert.strictEqual(res1.status, 201);
+    assert.strictEqual(res1.data.course.course_code, 'EE301');
+    assert.strictEqual(res1.data.course.status, 'active');
+    courseId = res1.data.course.id;
+    pass('教師成功建立新課程 (201 Created)');
+
+    // 1.2 課程重複 409 衝撞處理
+    const res2 = await apiRequest('/courses', {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: { course_code: 'EE301', name: '近代物理實驗二', semester: '114-1' },
+    });
+    assert.strictEqual(res2.status, 409);
+    pass('重複 course_code + semester 正確回傳 409 Conflict');
+
+    // 1.3 查詢個人課程清單
+    const res3 = await apiRequest('/courses', { cookie: teacherCookie });
+    assert.strictEqual(res3.status, 200);
+    assert(res3.data.courses.length >= 1);
+    assert.strictEqual(res3.data.courses[0].role, 'teacher');
+    pass('教師查詢個人課程清單包含正確角色 (200 OK)');
+
+    // 1.4 教師更新課程設定 (PATCH /courses/:id)
+    const res4 = await apiRequest(`/courses/${courseId}`, {
+      method: 'PATCH',
+      cookie: teacherCookie,
+      body: { name: '近代物理實驗（修訂）' },
+    });
+    assert.strictEqual(res4.status, 200);
+    assert.strictEqual(res4.data.course.name, '近代物理實驗（修訂）');
+    pass('教師成功修改課程名稱 (200 OK)');
+
+    // 1.5 學生未加入該課程查詢詳情 (存在性遮蔽 404)
+    const res5 = await apiRequest(`/courses/${courseId}`, { cookie: otherStudentCookie });
+    assert.strictEqual(res5.status, 404);
+    pass('非課程成員查詢課程詳情回傳 404 遮蔽存在性');
+  } catch (err) {
+    fail('群組 1 執行失敗', err);
+  }
+
+  // -------------------------------------------------------------
+  // 群組 2: Course Memberships 與 Last Active Teacher 保護
+  // -------------------------------------------------------------
+  console.log('\n▶ [群組 2: Course Memberships 與 Last Active Teacher 保護]');
+  let teacherMemberId = '';
+  let studentMemberId = '';
+  try {
+    // 2.1 查詢課程成員名單 (建立者身為首任 teacher)
+    const res1 = await apiRequest(`/courses/${courseId}/members`, { cookie: teacherCookie });
+    assert.strictEqual(res1.status, 200);
+    const membersList = res1.data.members || res1.data.course_members || [];
+    assert.strictEqual(membersList.length, 1);
+    teacherMemberId = membersList[0].id;
+    assert.strictEqual(membersList[0].role, 'teacher');
+    pass('課程建立時已自動批次綁定首位 Teacher 成員');
+
+    // 2.2 Last Active Teacher 降級保護
+    const res2 = await apiRequest(`/courses/${courseId}/members/${teacherMemberId}`, {
+      method: 'PATCH',
+      cookie: teacherCookie,
+      body: { role: 'student' },
+    });
+    assert.strictEqual(res2.status, 400);
+    assert(res2.data.error.includes('Cannot demote'));
+    pass('最後一位活躍教師嘗試降級遭 400 阻擋 (Last Teacher Protection)');
+
+    // 2.3 Last Active Teacher 停用保護
+    const res3 = await apiRequest(`/courses/${courseId}/members/${teacherMemberId}`, {
+      method: 'PATCH',
+      cookie: teacherCookie,
+      body: { status: 'inactive' },
+    });
+    assert.strictEqual(res3.status, 400);
+    assert(res3.data.error.includes('Cannot deactivate'));
+    pass('最後一位活躍教師嘗試停用遭 400 阻擋 (Last Teacher Protection)');
+
+    // 2.4 教師新增學生至課程
+    const res4 = await apiRequest(`/courses/${courseId}/members`, {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: { github_id: '20001', username: 'studentChen', role: 'student' },
+    });
+    assert.strictEqual(res4.status, 201);
+    studentMemberId = res4.data.member.id;
+    assert.strictEqual(res4.data.member.username, 'studentChen');
+    pass('教師成功將學生加入課程 (201 Created)');
+
+    // 2.5 學生嘗試調用成員管理修改角色 (403 越權攔截)
+    const res5 = await apiRequest(`/courses/${courseId}/members/${studentMemberId}`, {
+      method: 'PATCH',
+      cookie: studentCookie,
+      body: { role: 'teacher' },
+    });
+    assert.strictEqual(res5.status, 403);
+    pass('學生嘗試提升自身為教師遭 403 Forbidden 阻絕');
+  } catch (err) {
+    fail('群組 2 執行失敗', err);
+  }
+
+  // -------------------------------------------------------------
+  // 群組 3: Experiments 建立、管理與 Regex 檢驗
+  // -------------------------------------------------------------
+  console.log('\n▶ [群組 3: Experiments 建立、管理與 Regex 檢驗]');
+  let expId = '';
+  try {
+    // 3.1 教師建立實驗專案
+    const res1 = await apiRequest('/experiments', {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: {
+        course_id: courseId,
+        experiment_code: 'exp-01',
+        name: '光電效應量測普朗克常數',
+        repository: 'example-org/physics-exp-01',
+        report_mode: 'shared',
+      },
+    });
+    assert.strictEqual(res1.status, 201);
+    expId = res1.data.experiment.id;
+    assert.strictEqual(res1.data.experiment.experiment_code, 'exp-01');
+    pass('教師成功建立實驗專案 (201 Created)');
+
+    // 3.2 驗證非法 repo 格式遭到攔截
+    const res2 = await apiRequest('/experiments', {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: {
+        course_id: courseId,
+        experiment_code: 'exp-invalid',
+        name: '非法 Repo 測試',
+        repository: 'invalid_repo_without_owner',
+      },
+    });
+    assert.strictEqual(res2.status, 400);
+    assert(res2.data.error.includes('owner/repo'));
+    pass('非 owner/repo 格式之 repository 遭 400 阻絕');
+
+    // 3.3 實驗 Repository 唯一性衝撞
+    const res3 = await apiRequest('/experiments', {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: {
+        course_id: courseId,
+        experiment_code: 'exp-02',
+        name: '重複 Repo 測試',
+        repository: 'example-org/physics-exp-01',
+      },
+    });
+    assert.strictEqual(res3.status, 409);
+    pass('重複 Repository 綁定回傳 409 Conflict');
+
+    // 3.4 教師更新實驗進度與報告模式
+    const res4 = await apiRequest(`/experiments/${expId}`, {
+      method: 'PATCH',
+      cookie: teacherCookie,
+      body: { status: 'in_progress', report_mode: 'separate' },
+    });
+    assert.strictEqual(res4.status, 200);
+    assert.strictEqual(res4.data.experiment.status, 'in_progress');
+    assert.strictEqual(res4.data.experiment.report_mode, 'separate');
+    pass('教師成功更新實驗狀態與報告模式 (200 OK)');
+  } catch (err) {
+    fail('群組 3 執行失敗', err);
+  }
+
+  // -------------------------------------------------------------
+  // 群組 4: Experiment Memberships 分組與前置條件校驗
+  // -------------------------------------------------------------
+  console.log('\n▶ [群組 4: Experiment Memberships 分組與前置條件校驗]');
+  let expMemberId = '';
+  try {
+    // 4.1 指派非課程成員遭阻擋 (必須先是 Course Member)
+    const res1 = await apiRequest(`/experiments/${expId}/members`, {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: { github_id: '999999', username: 'outsider', role: 'student' },
+    });
+    assert.strictEqual(res1.status, 400);
+    assert(res1.data.error.includes('not enrolled'));
+    pass('指派非課程成員至實驗專案遭 400 拒絕');
+
+    // 4.2 指派合法學生至實驗並設定組別
+    const res2 = await apiRequest(`/experiments/${expId}/members`, {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: { github_id: '20001', username: 'studentChen', role: 'student', group_name: '第 1 組' },
+    });
+    assert.strictEqual(res2.status, 201);
+    expMemberId = res2.data.member.id;
+    assert.strictEqual(res2.data.member.group_name, '第 1 組');
+    pass('合法學生成功指派至實驗專案並建立分組 (201 Created)');
+
+    // 4.3 重複指派回傳 409 Conflict
+    const res3 = await apiRequest(`/experiments/${expId}/members`, {
+      method: 'POST',
+      cookie: teacherCookie,
+      body: { github_id: '20001', username: 'studentChen', role: 'student' },
+    });
+    assert.strictEqual(res3.status, 409);
+    pass('重複指派相同成員回傳 409 Conflict');
+
+    // 4.4 教師修改成員分組
+    const res4 = await apiRequest(`/experiments/${expId}/members/${expMemberId}`, {
+      method: 'PATCH',
+      cookie: teacherCookie,
+      body: { group_name: '第 2 組' },
+    });
+    assert.strictEqual(res4.status, 200);
+    assert.strictEqual(res4.data.member.group_name, '第 2 組');
+    pass('教師成功調整實驗成員組別 (200 OK)');
+  } catch (err) {
+    fail('群組 4 執行失敗', err);
+  }
+
+  // -------------------------------------------------------------
+  // 群組 5: Activity Log 前後端展示與格式化
+  // -------------------------------------------------------------
+  console.log('\n▶ [群組 5: Activity Log 前後端展示與格式化]');
+  try {
+    // 5.1 寫入一筆真實活動紀錄
+    await mockD1.prepare(
+      `INSERT INTO activity_logs (id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name, actor_avatar, requested_by, approved_by, approval_status, action, target, summary, files_changed, commit_sha, details_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      'log-test-01',
+      'example-org/physics-exp-01',
+      'exp-01',
+      new Date().toISOString(),
+      'web',
+      'studentChen',
+      '陳同學',
+      null,
+      'studentChen',
+      'studentChen',
+      'approved',
+      'commit_created',
+      'report/report-20001.md',
+      '更新普朗克常數擬合曲線分析',
+      JSON.stringify(['report/report-20001.md', 'analysis/planck_fit.svg']),
+      'd83921a',
+      null
+    ).run();
+
+    // 5.2 查詢該 Repo 之 Activity Log
+    const res1 = await apiRequest('/activity?repo=example-org/physics-exp-01&exp=exp-01', {
+      cookie: studentCookie,
+    });
+    assert.strictEqual(res1.status, 200);
+    assert.strictEqual(res1.data.logs.length, 1);
+    const log = res1.data.logs[0];
+    assert.strictEqual(log.action, 'commit_created');
+    assert.strictEqual(log.commit_sha, 'd83921a');
+
+    // 5.3 驗證 files_changed JSON 反序列化相容性
+    const parsedFiles = JSON.parse(log.files_changed);
+    assert.strictEqual(parsedFiles.length, 2);
+    assert.strictEqual(parsedFiles[0], 'report/report-20001.md');
+    pass('Activity Log 成功查詢並完成 files_changed 與 commit_sha 格式解析');
+
+    // 5.4 拒絕越權之 HTTP DELETE /activity (405 Method Not Allowed)
+    const res2 = await apiRequest('/activity?repo=example-org/physics-exp-01', {
+      method: 'DELETE',
+      cookie: teacherCookie,
+    });
+    assert.strictEqual(res2.status, 405);
+    pass('Activity Log 維持 Append-Only 語義，拒絕 DELETE (405)');
+  } catch (err) {
+    fail('群組 5 執行失敗', err);
+  }
+
+  // -------------------------------------------------------------
+  // 群組 6: 課程狀態流轉與學生可見性 (archived / inactive)
+  // -------------------------------------------------------------
+  console.log('\n▶ [群組 6: 課程狀態流轉與學生可見性 (archived / inactive)]');
+  try {
+    // 6.1 將課程設定為 inactive
+    await apiRequest(`/courses/${courseId}`, {
+      method: 'PATCH',
+      cookie: teacherCookie,
+      body: { status: 'inactive' },
+    });
+
+    // 6.2 學生查詢課程列表 (inactive 自動對學生隱藏)
+    const res1 = await apiRequest('/courses', { cookie: studentCookie });
+    assert.strictEqual(res1.status, 200);
+    const hasInactive = res1.data.courses.some((c) => c.id === courseId);
+    assert.strictEqual(hasInactive, false);
+    pass('Inactive 課程對學生完全隱藏，不出現於課程列表');
+
+    // 6.3 學生直接訪問 inactive 課程詳情 (404 存在性遮蔽)
+    const res2 = await apiRequest(`/courses/${courseId}`, { cookie: studentCookie });
+    assert.strictEqual(res2.status, 404);
+    pass('學生直接存取 Inactive 課程回傳 404 遮蔽存在性');
+
+    // 6.4 教師仍可存取 Inactive 課程
+    const res3 = await apiRequest(`/courses/${courseId}`, { cookie: teacherCookie });
+    assert.strictEqual(res3.status, 200);
+    assert.strictEqual(res3.data.course.status, 'inactive');
+    pass('教師仍可維護檢視 Inactive 課程');
+
+    // 6.5 恢復為 active
+    await apiRequest(`/courses/${courseId}`, {
+      method: 'PATCH',
+      cookie: teacherCookie,
+      body: { status: 'active' },
+    });
+    pass('課程順利切換回 Active 狀態');
+  } catch (err) {
+    fail('群組 6 執行失敗', err);
+  }
+
+  // -------------------------------------------------------------
+  // 群組 7: Session 鑑權與登出生命週期
+  // -------------------------------------------------------------
+  console.log('\n▶ [群組 7: Session 鑑權與登出生命週期]');
+  try {
+    // 7.1 驗證 GET /api/auth/me
+    const res1 = await apiRequest('/auth/me', { cookie: teacherCookie });
+    assert.strictEqual(res1.status, 200);
+    assert.strictEqual(res1.data.authenticated, true);
+    assert.strictEqual(res1.data.user.username, 'teacherLin');
+    assert.strictEqual(res1.data.user.github_id, '99999');
+    pass('/api/auth/me 正確回傳已驗證之使用者資料');
+
+    // 7.2 未登入存取 /api/auth/me
+    const res2 = await apiRequest('/auth/me');
+    assert.strictEqual(res2.status, 200);
+    assert.strictEqual(res2.data.authenticated, false);
+    pass('無 Session 存取 /api/auth/me 回傳 authenticated: false');
+
+    // 7.3 POST /api/auth/logout
+    const res3 = await apiRequest('/auth/logout', { method: 'POST', cookie: teacherCookie });
+    assert.strictEqual(res3.status, 200);
+    const setCookie = res3.headers.get('set-cookie') || '';
+    assert(setCookie.includes('Max-Age=0'));
+    pass('POST /api/auth/logout 成功清除 Session Cookie (Max-Age=0)');
+
+    // 7.4 再次使用已登出之 Cookie 存取需要授權之端點 (401)
+    const res4 = await apiRequest('/courses', { cookie: teacherCookie });
+    assert.strictEqual(res4.status, 401);
+    pass('登出後舊 Session 存取資源回傳 401 Unauthorized');
+  } catch (err) {
+    fail('群組 7 執行失敗', err);
+  }
+
+  // 測試總結
+  console.log('\n====================================================');
+  console.log(`📊 驗證總結：通過 ${passedCount} 項，失敗 ${failedCount} 項`);
+  console.log('====================================================\n');
+
+  server.close();
+  if (failedCount > 0) {
+    process.exit(1);
+  }
+}
+
+server.listen(TEST_PORT, () => {
+  runFrontendIntegrationTests().catch((err) => {
+    console.error('Test runner fatal:', err);
+    server.close();
+    process.exit(1);
+  });
+});

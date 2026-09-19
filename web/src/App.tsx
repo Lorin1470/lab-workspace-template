@@ -1,176 +1,243 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Navbar } from './components/Navbar.tsx';
-import { LabList } from './components/LabList.tsx';
-import { LabDetail } from './components/LabDetail.tsx';
-import { ExperimentConfig, AuthUser } from './types/index.ts';
+import { CourseList } from './components/CourseList.tsx';
+import { CourseDetail } from './components/CourseDetail.tsx';
+import { ExperimentDetail } from './components/ExperimentDetail.tsx';
+import { Course, Experiment, AuthUser } from './types/index.ts';
+import { api, ApiError } from './api/client.ts';
+import { AlertCircle, CheckCircle2, X } from 'lucide-react';
 
-// 示範課程與實驗工作區資料庫
-const mockCoursesData: Record<string, ExperimentConfig[]> = {
-  '電子學實驗': [
-    {
-      course_id: 'EE201',
-      course_name: '電子學實驗',
-      semester: '114-1',
-      experiment_id: 'lab-01',
-      experiment_name: '二極體特性曲線與整流電路',
-      template_version: '1.0',
-      skill_version: '1.0',
-      report_mode: 'shared',
-      status: 'completed',
-      members: [
-        { github: 'studentA', name: '學生A', role: '組長' },
-        { github: 'studentB', name: '王小明', role: '組員' },
-      ],
-      created_at: '2026-09-10',
-      repository: 'example-org/electronics-lab-01',
-    },
-    {
-      course_id: 'EE201',
-      course_name: '電子學實驗',
-      semester: '114-1',
-      experiment_id: 'lab-02',
-      experiment_name: 'BJT 雙極性電晶體偏壓與特性量測',
-      template_version: '1.0',
-      skill_version: '1.0',
-      report_mode: 'shared',
-      status: 'report_writing',
-      members: [
-        { github: 'studentA', name: '學生A', role: '組長' },
-        { github: 'studentB', name: '王小明', role: '組員' },
-      ],
-      created_at: '2026-09-17',
-      repository: 'example-org/electronics-lab-02',
-    },
-    {
-      course_id: 'EE201',
-      course_name: '電子學實驗',
-      semester: '114-1',
-      experiment_id: 'lab-03',
-      experiment_name: 'OP AMP 運算放大器反相與非反相放大',
-      template_version: '1.0',
-      skill_version: '1.0',
-      report_mode: 'separate',
-      status: 'in_progress',
-      members: [
-        { github: 'studentA', name: '學生A', role: '組長' },
-        { github: 'studentB', name: '王小明', role: '組員' },
-      ],
-      created_at: '2026-09-18',
-      repository: 'example-org/electronics-lab-03',
-    },
-    {
-      course_id: 'EE201',
-      course_name: '電子學實驗',
-      semester: '114-1',
-      experiment_id: 'lab-04',
-      experiment_name: '主動式帶通濾波器設計與頻響量測',
-      template_version: '1.0',
-      skill_version: '1.0',
-      report_mode: 'shared',
-      status: 'not_started',
-      members: [
-        { github: 'studentA', name: '學生A', role: '組長' },
-        { github: 'studentB', name: '王小明', role: '組員' },
-      ],
-      created_at: '2026-09-18',
-      repository: 'example-org/electronics-lab-04',
-    },
-  ],
-  '數位邏輯實驗': [
-    {
-      course_id: 'EE102',
-      course_name: '數位邏輯實驗',
-      semester: '114-1',
-      experiment_id: 'lab-01',
-      experiment_name: 'TTL 與 CMOS 基本邏輯閘電路量測',
-      template_version: '1.0',
-      skill_version: '1.0',
-      report_mode: 'shared',
-      status: 'completed',
-      members: [
-        { github: 'studentA', name: '學生A', role: '組長' },
-      ],
-      created_at: '2026-09-12',
-      repository: 'example-org/digital-logic-lab-01',
-    },
-    {
-      course_id: 'EE102',
-      course_name: '數位邏輯實驗',
-      semester: '114-1',
-      experiment_id: 'lab-02',
-      experiment_name: '全加法器與 7 段顯示器解碼驅動',
-      template_version: '1.0',
-      skill_version: '1.0',
-      report_mode: 'shared',
-      status: 'in_progress',
-      members: [
-        { github: 'studentA', name: '學生A', role: '組長' },
-      ],
-      created_at: '2026-09-18',
-      repository: 'example-org/digital-logic-lab-02',
-    },
-  ],
-};
+type ViewMode = 'courses' | 'course-detail' | 'experiment-detail';
 
 export const App: React.FC = () => {
-  const [selectedCourse, setSelectedCourse] = useState<string>('電子學實驗');
-  const [selectedLab, setSelectedLab] = useState<ExperimentConfig | null>(null);
+  const [view, setView] = useState<ViewMode>('courses');
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [coursesLoading, setCoursesLoading] = useState<boolean>(true);
 
-  // 初始化時呼叫 /api/auth/me 檢查目前登入身分
-  useEffect(() => {
-    fetch('/api/auth/me', { credentials: 'include' })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data && data.authenticated && data.user) {
-          setUser(data.user);
-        } else {
-          setUser(null);
-        }
-      })
-      .catch(() => setUser(null));
+  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [selectedExperiment, setSelectedExperiment] = useState<Experiment | null>(null);
+
+  // 全域通知 Toast
+  const [toastSuccess, setToastSuccess] = useState<string | null>(null);
+  const [toastError, setToastError] = useState<string | null>(null);
+
+  const showSuccess = (msg: string) => {
+    setToastSuccess(msg);
+    setTimeout(() => setToastSuccess((prev) => (prev === msg ? null : prev)), 4000);
+  };
+
+  const showError = (msg: string) => {
+    setToastError(msg);
+    setTimeout(() => setToastError((prev) => (prev === msg ? null : prev)), 5000);
+  };
+
+  // 1. 取得登入身分
+  const checkAuth = useCallback(async () => {
+    try {
+      const res = await api.auth.me();
+      if (res.authenticated && res.user) {
+        setUser(res.user);
+      } else {
+        setUser(null);
+      }
+    } catch {
+      setUser(null);
+    }
   }, []);
 
+  // 2. 取得課程列表
+  const loadCourses = useCallback(async () => {
+    setCoursesLoading(true);
+    try {
+      const list = await api.courses.list();
+      setCourses(list);
+    } catch (err: any) {
+      if (err instanceof ApiError && err.status === 401) {
+        // 未登入狀態，課程清單設為空
+        setCourses([]);
+      } else {
+        showError(err.message || '讀取課程列表失敗');
+      }
+    } finally {
+      setCoursesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkAuth();
+    loadCourses();
+  }, [checkAuth, loadCourses]);
+
+  // 登出
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      await api.auth.logout();
+      showSuccess('已成功登出系統');
+    } catch {
+      // ignore
     } finally {
       setUser(null);
+      setSelectedCourse(null);
+      setSelectedExperiment(null);
+      setView('courses');
+      loadCourses();
     }
   };
 
-  const availableCourses = Object.keys(mockCoursesData);
-  const currentExperiments = mockCoursesData[selectedCourse] || [];
+  // 導覽至課程詳情
+  const handleSelectCourse = async (course: Course) => {
+    try {
+      const latest = await api.courses.get(course.id);
+      setSelectedCourse(latest);
+      setSelectedExperiment(null);
+      setView('course-detail');
+    } catch (err: any) {
+      if (err instanceof ApiError && err.status === 404) {
+        showError('課程不存在或存取被拒 (404)');
+      } else {
+        showError(err.message || '讀取課程詳情失敗');
+      }
+    }
+  };
+
+  // 導覽至實驗詳情
+  const handleSelectExperiment = async (exp: Experiment) => {
+    try {
+      const data = await api.experiments.get(exp.id);
+      setSelectedExperiment(data.experiment);
+      if (data.course) {
+        setSelectedCourse(data.course);
+      }
+      setView('experiment-detail');
+    } catch (err: any) {
+      if (err instanceof ApiError && err.status === 404) {
+        showError('實驗專案不存在或存取被拒 (404)');
+      } else {
+        showError(err.message || '讀取實驗詳情失敗');
+      }
+    }
+  };
+
+  // 當課程資訊更新時同步
+  const handleCourseUpdated = (updated: Course) => {
+    setSelectedCourse(updated);
+    setCourses((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+  };
+
+  // 當實驗資訊更新時同步
+  const handleExperimentUpdated = (updated: Experiment) => {
+    setSelectedExperiment(updated);
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
+      {/* 頂部導覽列 */}
       <Navbar
         currentCourse={selectedCourse}
-        onSelectCourse={(course) => {
-          setSelectedCourse(course);
-          setSelectedLab(null);
+        currentExperiment={selectedExperiment}
+        onNavigateHome={() => {
+          setSelectedCourse(null);
+          setSelectedExperiment(null);
+          setView('courses');
+          loadCourses();
         }}
-        availableCourses={availableCourses}
-        activeRepo={selectedLab?.repository || null}
-        onBackToHome={() => setSelectedLab(null)}
+        onNavigateCourse={(c) => {
+          setSelectedExperiment(null);
+          setSelectedCourse(c);
+          setView('course-detail');
+        }}
         user={user}
         onLogout={handleLogout}
       />
 
+      {/* 懸浮 Toast 提示 */}
+      <div className="fixed top-20 right-5 z-50 flex flex-col space-y-2 pointer-events-none">
+        {toastSuccess && (
+          <div className="pointer-events-auto bg-emerald-600 text-white px-4 py-2.5 rounded-xl shadow-lg flex items-center space-x-2 text-xs font-semibold animate-in slide-in-from-top-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{toastSuccess}</span>
+            <button
+              onClick={() => setToastSuccess(null)}
+              className="ml-2 hover:bg-emerald-700 p-0.5 rounded cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {toastError && (
+          <div className="pointer-events-auto bg-red-600 text-white px-4 py-2.5 rounded-xl shadow-lg flex items-center space-x-2 text-xs font-semibold animate-in slide-in-from-top-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{toastError}</span>
+            <button
+              onClick={() => setToastError(null)}
+              className="ml-2 hover:bg-red-700 p-0.5 rounded cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* 主體畫面 */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {selectedLab ? (
-          <LabDetail lab={selectedLab} onBack={() => setSelectedLab(null)} />
-        ) : (
-          <LabList
-            courseName={selectedCourse}
-            experiments={currentExperiments}
-            onSelectLab={(lab) => setSelectedLab(lab)}
+        {view === 'courses' && (
+          <CourseList
+            courses={courses}
+            user={user}
+            loading={coursesLoading}
+            onRefresh={loadCourses}
+            onSelectCourse={handleSelectCourse}
+            onError={showError}
+            onSuccess={showSuccess}
+          />
+        )}
+
+        {view === 'course-detail' && selectedCourse && (
+          <CourseDetail
+            course={selectedCourse}
+            user={user}
+            onBack={() => {
+              setSelectedCourse(null);
+              setSelectedExperiment(null);
+              setView('courses');
+              loadCourses();
+            }}
+            onSelectExperiment={handleSelectExperiment}
+            onCourseUpdated={handleCourseUpdated}
+            onError={showError}
+            onSuccess={showSuccess}
+          />
+        )}
+
+        {view === 'experiment-detail' && selectedExperiment && (
+          <ExperimentDetail
+            experiment={selectedExperiment}
+            course={selectedCourse}
+            userRole={selectedCourse?.role}
+            user={user}
+            onBack={() => {
+              if (selectedCourse) {
+                setSelectedExperiment(null);
+                setView('course-detail');
+              } else {
+                setSelectedCourse(null);
+                setSelectedExperiment(null);
+                setView('courses');
+                loadCourses();
+              }
+            }}
+            onExperimentUpdated={handleExperimentUpdated}
+            onError={showError}
+            onSuccess={showSuccess}
           />
         )}
       </main>
 
+      {/* 頁尾 */}
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400">
-        <p>實驗課 GitHub 工作區系統 • 一節課一 Repo 實驗協作體系 • Powered by Cloudflare Pages & GitHub API</p>
+        <p>實驗課 GitHub 工作區系統 • 一節課一 Repo 實驗協作體系 • Powered by Cloudflare Pages & D1</p>
       </footer>
     </div>
   );

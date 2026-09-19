@@ -86,6 +86,7 @@ export interface Course {
   created_by_github_id?: string | null;
   created_at: string;
   updated_at: string;
+  role?: CourseRole;
 }
 
 export interface CreateCourseRequest {
@@ -150,6 +151,7 @@ export interface Experiment {
   status: ExperimentStatus;
   created_at: string;
   updated_at: string;
+  group_name?: string | null;
 }
 
 export interface CourseMembership {

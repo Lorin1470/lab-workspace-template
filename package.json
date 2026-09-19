@@ -12,6 +12,7 @@
     "test:auth": "node scripts/verify-auth-session.mjs",
     "test:permissions": "node scripts/verify-permissions.mjs",
     "test:management": "node scripts/verify-management.mjs",
+    "test:frontend": "node scripts/verify-frontend.mjs",
     "test:prod": "node scripts/smoke-test-prod.mjs",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build"
