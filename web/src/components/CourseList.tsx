@@ -40,6 +40,8 @@ export const CourseList: React.FC<CourseListProps> = ({
   const [newCode, setNewCode] = useState('');
   const [newName, setNewName] = useState('');
   const [newSemester, setNewSemester] = useState('');
+  const [newMode, setNewMode] = useState<'course' | 'experiment'>('course');
+  const [newGithubRepo, setNewGithubRepo] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
   // 登入使用者即可建立新課程工作區（同儕協作模型）
@@ -62,6 +64,14 @@ export const CourseList: React.FC<CourseListProps> = ({
       return;
     }
 
+    if (newMode === 'course') {
+      const repoRegex = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
+      if (!repoRegex.test(newGithubRepo.trim())) {
+        setFormError('課程模式必須指定有效的 GitHub Repository (owner/repo)');
+        return;
+      }
+    }
+
     setSubmitting(true);
     setFormError(null);
 
@@ -70,12 +80,16 @@ export const CourseList: React.FC<CourseListProps> = ({
         course_code: newCode.trim(),
         name: newName.trim(),
         semester: newSemester.trim(),
+        mode: newMode,
+        github_repository: newMode === 'course' ? newGithubRepo.trim() : undefined,
       });
       onSuccess(`課程「${created.name} (${created.course_code})」建立成功！`);
       setIsCreateOpen(false);
       setNewCode('');
       setNewName('');
       setNewSemester('');
+      setNewMode('course');
+      setNewGithubRepo('');
       onRefresh();
       onSelectCourse(created);
     } catch (err: any) {
@@ -258,6 +272,13 @@ export const CourseList: React.FC<CourseListProps> = ({
                 <p className="text-xs text-slate-400 mt-2">
                   課程識別碼：<span className="font-mono">{c.id}</span>
                 </p>
+
+                {c.mode === 'course' && c.github_repository && (
+                  <p className="text-xs text-slate-600 font-mono mt-1 flex items-center space-x-1 truncate">
+                    <FolderGit2 className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                    <span className="truncate">{c.github_repository}</span>
+                  </p>
+                )}
               </div>
 
               <div className="mt-6 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-blue-600 font-semibold">
@@ -367,6 +388,61 @@ export const CourseList: React.FC<CourseListProps> = ({
                   課程代碼與學期組合必須唯一 (UNIQUE)
                 </p>
               </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  儲存庫架構模式 (Repository Mode) <span className="text-red-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className={`flex flex-col p-2.5 rounded-lg border text-xs cursor-pointer transition-colors ${newMode === 'course' ? 'border-blue-500 bg-blue-50/50 text-blue-900' : 'border-slate-200 hover:bg-slate-50 text-slate-700'}`}>
+                    <div className="flex items-center space-x-1.5 font-semibold">
+                      <input
+                        type="radio"
+                        name="course_mode"
+                        value="course"
+                        checked={newMode === 'course'}
+                        onChange={() => setNewMode('course')}
+                        className="text-blue-600"
+                      />
+                      <span>課程模式 (預設)</span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 mt-1">全課共用單一 Repo，各實驗以目錄隔離</span>
+                  </label>
+                  <label className={`flex flex-col p-2.5 rounded-lg border text-xs cursor-pointer transition-colors ${newMode === 'experiment' ? 'border-blue-500 bg-blue-50/50 text-blue-900' : 'border-slate-200 hover:bg-slate-50 text-slate-700'}`}>
+                    <div className="flex items-center space-x-1.5 font-semibold">
+                      <input
+                        type="radio"
+                        name="course_mode"
+                        value="experiment"
+                        checked={newMode === 'experiment'}
+                        onChange={() => setNewMode('experiment')}
+                        className="text-blue-600"
+                      />
+                      <span>實驗模式 (相容)</span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 mt-1">各實驗各自綁定獨立 Repo</span>
+                  </label>
+                </div>
+              </div>
+
+              {newMode === 'course' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    GitHub 儲存庫 (owner/repo) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="例如：your-org/electronics-lab"
+                    value={newGithubRepo}
+                    onChange={(e) => setNewGithubRepo(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white font-mono"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    課程模式專用 GitHub 儲存庫。全體實驗將共用此儲存庫並在 <code className="font-mono text-slate-600">experiments/&lt;code&gt;/</code> 下運作。
+                  </p>
+                </div>
+              )}
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
                 <button

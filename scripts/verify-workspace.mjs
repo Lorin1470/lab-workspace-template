@@ -42,6 +42,7 @@ class MockD1 {
   constructor() {
     this.experiments = new Map();
     this.courseMemberships = new Map();
+    this.courses = new Map();
   }
 
   prepare(query) {
@@ -61,6 +62,10 @@ class MockD1 {
               }
             }
             return null;
+          }
+          if (q.includes('FROM courses WHERE id = ?')) {
+            const id = binds[0];
+            return this.courses.get(id) || null;
           }
           return null;
         },
@@ -314,6 +319,20 @@ async function runTests() {
     GITHUB_APP_PRIVATE_KEY: testKeypairPkcs8.privateKey,
     GITHUB_APP_TARGET_OWNER: 'example-org',
   };
+
+  // 註冊課程資料
+  mockDb.courses.set('course-ee201', {
+    id: 'course-ee201',
+    course_code: 'EE201',
+    name: '電子學實驗',
+    semester: '114-1',
+    status: 'active',
+    mode: 'experiment', // 維持既有實驗模式相容性
+    github_repository: 'example-org/ee201-lab-01', // 課程模式下的儲存庫（在此實驗模式下不使用，但需存在以避免錯誤）
+    created_by_github_id: '100',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  });
 
   // 註冊測試課程與實驗資料
   mockDb.experiments.set('exp-01', {

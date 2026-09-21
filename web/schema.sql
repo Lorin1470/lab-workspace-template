@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS courses (
     name TEXT NOT NULL,                        -- 課程全名 (例如 "電子學實驗")
     semester TEXT NOT NULL,                    -- 學期 (例如 "114-1")
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived', 'inactive')), -- 課程狀態
+    mode TEXT NOT NULL DEFAULT 'course' CHECK(mode IN ('course', 'experiment')), -- 儲存庫架構模式 (course 預設, experiment 相容模式)
+    github_repository TEXT,                    -- 課程模式專用 GitHub 儲存庫 (例如 "your-org/electronics-lab-01")
     created_by_github_id TEXT,                 -- 建立者 GitHub ID (不代表權限)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -55,14 +57,14 @@ CREATE TABLE IF NOT EXISTS courses (
 CREATE INDEX IF NOT EXISTS idx_courses_code ON courses(course_code);
 
 -- 2. 實驗資料表 (experiments)
--- 嚴格限制 repository TEXT NOT NULL UNIQUE (一個 Repo 僅能綁定一個 Experiment)
 -- 實驗代號使用 experiment_code (例如 "lab-01")，與系統 UUID id 區隔
+-- course mode 下 repository 為 NULL；experiment mode 下為唯一綁定
 CREATE TABLE IF NOT EXISTS experiments (
     id TEXT PRIMARY KEY,                       -- 系統 UUID (例如 "exp_...")
     course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
     experiment_code TEXT NOT NULL,             -- 實驗代號 (例如 "lab-01")
     name TEXT NOT NULL,                        -- 實驗名稱 (例如 "BJT 雙極性接面電晶體特性量測")
-    repository TEXT NOT NULL UNIQUE,           -- 關聯之 GitHub Repo 全名 (唯一綁定)
+    repository TEXT,                           -- 關聯之 GitHub Repo 全名 (course mode 為 NULL；experiment mode 唯一綁定)
     report_mode TEXT NOT NULL DEFAULT 'shared' CHECK(report_mode IN ('shared', 'separate')),
     config_version TEXT NOT NULL DEFAULT '1.0',
     status TEXT NOT NULL DEFAULT 'not_started' CHECK(status IN ('not_started', 'in_progress', 'data_processing', 'report_writing', 'completed')),
@@ -74,6 +76,7 @@ CREATE TABLE IF NOT EXISTS experiments (
     UNIQUE(course_id, experiment_code)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_experiments_repo_unique ON experiments(repository) WHERE repository IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_experiments_repo ON experiments(repository);
 CREATE INDEX IF NOT EXISTS idx_experiments_course ON experiments(course_id);
 

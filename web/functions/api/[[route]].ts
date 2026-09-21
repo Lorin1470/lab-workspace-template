@@ -8,6 +8,7 @@ import {
   sanitizeErrorMessage,
 } from './services/provisioning.ts';
 import {
+  getWorkspaceRepository,
   listFiles,
   readFile,
   createOrUpdateFile,
@@ -178,6 +179,7 @@ export async function resolveExperimentPermission(
     repo_name?: string;
     course_id?: string;
     experiment_code?: string;
+    experiment_id?: string;
   },
   action?: string,
   targetPath?: string | null,
@@ -196,13 +198,39 @@ export async function resolveExperimentPermission(
   let exp: any = null;
   let course: any = null;
 
-  if (context.repo_name) {
+  if (context.experiment_id) {
+    const stmt = env.DB.prepare(
+      'SELECT id, course_id, experiment_code, name, repository, report_mode, config_version, status FROM experiments WHERE id = ?'
+    ).bind(context.experiment_id);
+    exp = await safeD1First(stmt);
+  } else if (context.repo_name) {
     const stmt = env.DB.prepare(
       'SELECT id, course_id, experiment_code, name, repository, report_mode, config_version, status FROM experiments WHERE repository = ?'
     ).bind(context.repo_name);
     exp = await safeD1First(stmt);
     if (exp && exp.repository !== context.repo_name) {
       exp = null;
+    }
+    if (!exp) {
+      // 檢查是否為 course mode 下之 courses.github_repository
+      const cStmt = env.DB.prepare(
+        'SELECT id, course_code, name, semester, status, mode, github_repository, created_by_github_id FROM courses WHERE github_repository = ?'
+      ).bind(context.repo_name);
+      const matchedCourse: any = await safeD1First(cStmt);
+      if (matchedCourse) {
+        course = matchedCourse;
+        if (context.experiment_code) {
+          const expStmt = env.DB.prepare(
+            'SELECT id, course_id, experiment_code, name, repository, report_mode, config_version, status FROM experiments WHERE course_id = ? AND experiment_code = ?'
+          ).bind(matchedCourse.id, context.experiment_code);
+          exp = await safeD1First(expStmt);
+        } else {
+          const expStmt = env.DB.prepare(
+            'SELECT id, course_id, experiment_code, name, repository, report_mode, config_version, status FROM experiments WHERE course_id = ? ORDER BY created_at ASC LIMIT 1'
+          ).bind(matchedCourse.id);
+          exp = await safeD1First(expStmt);
+        }
+      }
     }
   } else if (context.course_id && context.experiment_code) {
     const stmt = env.DB.prepare(
@@ -211,18 +239,18 @@ export async function resolveExperimentPermission(
     exp = await safeD1First(stmt);
   }
 
-  if (context.repo_name && !exp) {
+  if (context.repo_name && !exp && !course) {
     return { allowed: false, role: 'guest', reason: 'Experiment repository not found in system' };
   }
 
-  if (exp) {
+  if (exp && !course) {
     const stmt = env.DB.prepare(
-      'SELECT id, course_code, name, semester, status, created_by_github_id FROM courses WHERE id = ?'
+      'SELECT id, course_code, name, semester, status, mode, github_repository, created_by_github_id FROM courses WHERE id = ?'
     ).bind(exp.course_id);
     course = await safeD1First(stmt);
-  } else if (context.course_id) {
+  } else if (!course && context.course_id) {
     const stmt = env.DB.prepare(
-      'SELECT id, course_code, name, semester, status, created_by_github_id FROM courses WHERE id = ?'
+      'SELECT id, course_code, name, semester, status, mode, github_repository, created_by_github_id FROM courses WHERE id = ?'
     ).bind(context.course_id);
     course = await safeD1First(stmt);
   }
@@ -243,7 +271,7 @@ export async function resolveExperimentPermission(
   }
 
   // 2. 查 course_memberships (教師或全課助教具備課程下所有實驗存取權)
-  const courseId = exp ? exp.course_id : context.course_id;
+  const courseId = exp ? exp.course_id : ((course as any)?.id || context.course_id);
   if (courseId) {
     const stmt = env.DB.prepare(
       'SELECT role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
@@ -416,11 +444,16 @@ export const onRequest = async (context: any) => {
           );
         }
 
-        // 檢查該 repo 是否為系統註冊之 Experiment (如果是，則必須授權存取)
+        // 檢查該 repo 是否為系統註冊之 Experiment 或 Course (如果是，則必須授權存取)
         if (env.DB) {
           const stmt = env.DB.prepare('SELECT id, repository FROM experiments WHERE repository = ?').bind(repo);
           const expRow: any = await safeD1First(stmt);
-          if (expRow && expRow.repository === repo) {
+          let courseRow: any = null;
+          if (!expRow || expRow.repository !== repo) {
+            courseRow = await safeD1First(env.DB.prepare('SELECT id, github_repository FROM courses WHERE github_repository = ?').bind(repo));
+          }
+          const isRegistered = Boolean((expRow && expRow.repository === repo) || (courseRow && courseRow.github_repository === repo));
+          if (isRegistered) {
             const authHeader = request.headers.get('Authorization') || '';
             const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
             const expectedSecret =
@@ -436,7 +469,8 @@ export const onRequest = async (context: any) => {
                   { status: 404, headers }
                 );
               }
-              const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo });
+              const expParam = url.searchParams.get('exp');
+              const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo, experiment_code: expParam || undefined });
               if (!perm.allowed) {
                 return new Response(
                   JSON.stringify({ error: 'Repository not found or access denied' }),
@@ -535,11 +569,16 @@ export const onRequest = async (context: any) => {
           if (env.DB && body.repo_name) {
             const stmt = env.DB.prepare('SELECT id, repository FROM experiments WHERE repository = ?').bind(body.repo_name);
             const expCheck: any = await safeD1First(stmt);
-            if (expCheck && expCheck.repository === body.repo_name) {
+            let courseCheck: any = null;
+            if (!expCheck || expCheck.repository !== body.repo_name) {
+              courseCheck = await safeD1First(env.DB.prepare('SELECT id, github_repository FROM courses WHERE github_repository = ?').bind(body.repo_name));
+            }
+            const isRegistered = Boolean((expCheck && expCheck.repository === body.repo_name) || (courseCheck && courseCheck.github_repository === body.repo_name));
+            if (isRegistered) {
               const perm = await resolveExperimentPermission(
                 env,
                 sessionUser,
-                { repo_name: body.repo_name },
+                { repo_name: body.repo_name, experiment_code: body.experiment_id },
                 body.action,
                 body.target,
                 body.files_changed
@@ -960,7 +999,7 @@ export const onRequest = async (context: any) => {
       if (request.method === 'GET') {
         // 查詢使用者為 active 成員的所有課程工作區
         const res: any = await env.DB.prepare(
-          `SELECT c.id, c.course_code, c.name, c.semester, c.status, c.created_by_github_id, c.created_at, c.updated_at, cm.role
+          `SELECT c.id, c.course_code, c.name, c.semester, c.status, c.mode, c.github_repository, c.created_by_github_id, c.created_at, c.updated_at, cm.role
            FROM courses c
            JOIN course_memberships cm ON c.id = cm.course_id
            WHERE cm.github_id = ? AND cm.status = 'active'
@@ -972,7 +1011,6 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
-
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== 'object') {
           return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
@@ -981,9 +1019,27 @@ export const onRequest = async (context: any) => {
         const course_code = String(body.course_code || '').trim();
         const name = String(body.name || '').trim();
         const semester = String(body.semester || '').trim();
+        const github_repository = body.github_repository ? String(body.github_repository).trim() : null;
+        let mode: 'course' | 'experiment';
+        if (body.mode === 'course') {
+          mode = 'course';
+        } else if (body.mode === 'experiment') {
+          mode = 'experiment';
+        } else {
+          mode = github_repository ? 'course' : 'experiment';
+        }
 
         if (!course_code || !name || !semester) {
           return new Response(JSON.stringify({ error: 'course_code, name, and semester are required' }), { status: 400, headers });
+        }
+
+        if (mode === 'course') {
+          if (!github_repository) {
+            return new Response(JSON.stringify({ error: 'github_repository is required in course mode' }), { status: 400, headers });
+          }
+          if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(github_repository)) {
+            return new Response(JSON.stringify({ error: 'Invalid github_repository format: must be owner/repo' }), { status: 400, headers });
+          }
         }
 
         // 檢查 UNIQUE(course_code, semester)
@@ -999,9 +1055,9 @@ export const onRequest = async (context: any) => {
         const now = new Date().toISOString();
 
         const stmtCourse = env.DB.prepare(
-          `INSERT INTO courses (id, course_code, name, semester, status, created_by_github_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(courseId, course_code, name, semester, 'active', sessionUser.github_id, now, now);
+          `INSERT INTO courses (id, course_code, name, semester, status, mode, github_repository, created_by_github_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(courseId, course_code, name, semester, 'active', mode, github_repository, sessionUser.github_id, now, now);
 
         // 建立者自動成為該課程之 Teacher (原子化批次執行，防範孤兒課程)
         const stmtMember = env.DB.prepare(
@@ -1320,11 +1376,10 @@ export const onRequest = async (context: any) => {
         const course_id = String(body.course_id || '').trim();
         const experiment_code = String(body.experiment_code || '').trim();
         const name = String(body.name || '').trim();
-        const repository = String(body.repository || '').trim();
         const report_mode = body.report_mode || 'shared';
 
-        if (!course_id || !experiment_code || !name || !repository) {
-          return new Response(JSON.stringify({ error: 'course_id, experiment_code, name, and repository are required' }), { status: 400, headers });
+        if (!course_id || !experiment_code || !name) {
+          return new Response(JSON.stringify({ error: 'course_id, experiment_code, and name are required' }), { status: 400, headers });
         }
 
         if (!['shared', 'separate'].includes(report_mode)) {
@@ -1332,7 +1387,7 @@ export const onRequest = async (context: any) => {
         }
 
         // 檢查課程存在性與狀態
-        const course: any = await safeD1First(env.DB.prepare('SELECT id, status FROM courses WHERE id = ?').bind(course_id));
+        const course: any = await safeD1First(env.DB.prepare('SELECT id, status, mode, github_repository FROM courses WHERE id = ?').bind(course_id));
         if (!course) {
           return new Response(JSON.stringify({ error: 'Course not found' }), { status: 400, headers });
         }
@@ -1346,17 +1401,34 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ error: 'Forbidden: Only course members can create experiments' }), { status: 403, headers });
         }
 
-        // 檢查 repository 格式
-        if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository)) {
-          return new Response(JSON.stringify({ error: 'Invalid repository format: must be owner/repo' }), { status: 400, headers });
-        }
+        let expRepository: string | null = null;
+        if (course.mode === 'course') {
+          // Course mode：
+          // 儲存庫使用 course.github_repository
+          // 實驗的 repository 欄位在 D1 為 NULL
+          if (!course.github_repository || !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(course.github_repository)) {
+            return new Response(JSON.stringify({ error: 'Course is in course mode but missing valid github_repository' }), { status: 400, headers });
+          }
+          expRepository = null;
+        } else {
+          // Experiment mode：
+          // 每個 Experiment 建立獨立 repository
+          const repository = String(body.repository || '').trim();
+          if (!repository) {
+            return new Response(JSON.stringify({ error: 'repository is required in experiment mode' }), { status: 400, headers });
+          }
+          if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository)) {
+            return new Response(JSON.stringify({ error: 'Invalid repository format: must be owner/repo' }), { status: 400, headers });
+          }
 
-        // 檢查 repository 唯一性約束 (UNIQUE)
-        const existingRepo: any = await safeD1First(
-          env.DB.prepare('SELECT id FROM experiments WHERE repository = ?').bind(repository)
-        );
-        if (existingRepo) {
-          return new Response(JSON.stringify({ error: 'Conflict: Repository is already registered for another experiment' }), { status: 409, headers });
+          // 檢查 repository 唯一性約束 (UNIQUE)
+          const existingRepo: any = await safeD1First(
+            env.DB.prepare('SELECT id FROM experiments WHERE repository = ?').bind(repository)
+          );
+          if (existingRepo) {
+            return new Response(JSON.stringify({ error: 'Conflict: Repository is already registered for another experiment' }), { status: 409, headers });
+          }
+          expRepository = repository;
         }
 
         // 檢查 UNIQUE(course_id, experiment_code)
@@ -1373,9 +1445,9 @@ export const onRequest = async (context: any) => {
         try {
           await env.DB.prepare(
             `INSERT INTO experiments (
-              id, course_id, experiment_code, name, repository, report_mode, config_version, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          ).bind(expId, course_id, experiment_code, name, repository, report_mode, '1.0', 'not_started', now, now).run();
+              id, course_id, experiment_code, name, repository, report_mode, config_version, status, provisioning_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+          ).bind(expId, course_id, experiment_code, name, expRepository, report_mode, '1.0', 'not_started', now, now).run();
 
           // 協作者自動加入實驗成員
           const emId = `em_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
@@ -1398,7 +1470,8 @@ export const onRequest = async (context: any) => {
       if (request.method === 'GET') {
         const repo = url.searchParams.get('repo');
         if (repo) {
-          const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo });
+          const expCode = url.searchParams.get('experiment_code') || url.searchParams.get('exp');
+          const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo, experiment_code: expCode || undefined });
           if (!perm.allowed || !perm.experiment) {
             return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
           }
@@ -1473,7 +1546,7 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: exp.id });
       if (!perm.allowed) {
         return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
       }
@@ -1555,7 +1628,7 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'GET') {
-        const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+        const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: exp.id });
         if (!perm.allowed) {
           return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
         }
@@ -1731,7 +1804,9 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'GET') {
-        const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+        const course: any = await safeD1First(env.DB.prepare('SELECT id, mode, github_repository FROM courses WHERE id = ?').bind(exp.course_id));
+        const targetRepo = (course?.mode === 'course' ? course?.github_repository : exp.repository) || exp.repository;
+        const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: exp.id, repo_name: targetRepo });
         if (!perm.allowed) {
           return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
         }
@@ -1748,7 +1823,7 @@ export const onRequest = async (context: any) => {
           JSON.stringify({
             success: true,
             experiment_id: exp.id,
-            repository: exp.repository,
+            repository: targetRepo,
             provisioning_status: exp.provisioning_status || 'ready',
             provisioning_error: exp.provisioning_error || null,
             provisioned_at: exp.provisioned_at || null,
@@ -1766,9 +1841,14 @@ export const onRequest = async (context: any) => {
         }
 
         // 檢查課程狀態是否為 active
-        const course: any = await safeD1First(env.DB.prepare('SELECT id, status FROM courses WHERE id = ?').bind(exp.course_id));
+        const course: any = await safeD1First(env.DB.prepare('SELECT id, status, mode, github_repository FROM courses WHERE id = ?').bind(exp.course_id));
         if (!course || course.status !== 'active') {
           return new Response(JSON.stringify({ error: `Cannot provision repository in a ${course?.status || 'non-active'} course` }), { status: 400, headers });
+        }
+
+        const targetRepository = course.mode === 'course' ? course.github_repository : exp.repository;
+        if (!targetRepository) {
+          return new Response(JSON.stringify({ error: 'No repository configured for provisioning' }), { status: 400, headers });
         }
 
         // 防重入：若目前處於 creating 狀態且在 2 分鐘以內，阻擋並回傳 409 Conflict
@@ -1793,7 +1873,7 @@ export const onRequest = async (context: any) => {
         try {
           await env.DB.prepare(
             'INSERT INTO experiment_provisionings (id, experiment_id, repository, status, created_at, updated_at) VALUES (?, ?, ?, "creating", ?, ?)'
-          ).bind(provId, expId, exp.repository, nowIso, nowIso).run();
+          ).bind(provId, expId, targetRepository, nowIso, nowIso).run();
         } catch (_err) {}
 
         // 寫入 Activity Log (provisioning_started)
@@ -1806,7 +1886,7 @@ export const onRequest = async (context: any) => {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).bind(
             startLogId,
-            exp.repository,
+            targetRepository,
             exp.experiment_code,
             nowIso,
             'web',
@@ -1817,7 +1897,7 @@ export const onRequest = async (context: any) => {
             sessionUser.username,
             'approved',
             'provisioning_started',
-            `開始建立實驗儲存庫: ${exp.repository}`,
+            `開始建立實驗儲存庫: ${targetRepository}`,
             null
           ).run();
         } catch (_e) {}
@@ -1825,8 +1905,10 @@ export const onRequest = async (context: any) => {
         // 呼叫 Provisioning Service
         const provResult = await provisionRepository(
           env,
-          exp.repository,
-          `Lab workspace for ${exp.experiment_code}: ${exp.name}`,
+          targetRepository,
+          course.mode === 'course'
+            ? `Course workspace for ${course.name || course.id}: ${targetRepository}`
+            : `Lab workspace for ${exp.experiment_code}: ${exp.name}`,
           env.FETCH || fetch
         );
 
@@ -1852,7 +1934,7 @@ export const onRequest = async (context: any) => {
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).bind(
               logId,
-              exp.repository,
+              targetRepository,
               exp.experiment_code,
               doneIso,
               'web',
@@ -1863,7 +1945,7 @@ export const onRequest = async (context: any) => {
               sessionUser.username,
               'approved',
               'provisioning_completed',
-              `成功建立實驗儲存庫: ${exp.repository}`,
+              `成功建立實驗儲存庫: ${targetRepository}`,
               null
             ).run();
           } catch (_e) {}
@@ -1904,7 +1986,7 @@ export const onRequest = async (context: any) => {
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).bind(
               logId,
-              exp.repository,
+              targetRepository,
               exp.experiment_code,
               failIso,
               'web',
@@ -1930,6 +2012,7 @@ export const onRequest = async (context: any) => {
               success: false,
               status: 'failed',
               error: sanitizedErr,
+              repository: { full_name: targetRepository },
             }),
             { status: isValidationErr ? 400 : 502, headers }
           );
@@ -1960,7 +2043,7 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: exp.id });
       if (!perm.allowed) {
         return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), { status: 403, headers });
       }
@@ -2011,13 +2094,15 @@ export const onRequest = async (context: any) => {
       if (!exp) {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
-      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: exp.id });
       if (!perm.allowed) {
         return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), {
           status: 403,
           headers,
         });
       }
+
+      const repoInfo = await getWorkspaceRepository(env, expId, sessionUser);
 
       const reportPath =
         exp.report_mode === 'separate'
@@ -2077,7 +2162,7 @@ export const onRequest = async (context: any) => {
                 experiment: {
                   id: exp.id,
                   code: exp.experiment_code,
-                  repository: exp.repository,
+                  repository: repoInfo.full_name,
                   report_mode: exp.report_mode || 'shared',
                 },
                 reads: [
@@ -2144,7 +2229,7 @@ export const onRequest = async (context: any) => {
           experiment: {
             id: exp.id,
             code: exp.experiment_code,
-            repository: exp.repository,
+            repository: repoInfo.full_name,
             report_mode: exp.report_mode || 'shared',
           },
           reads: [
@@ -2216,7 +2301,7 @@ export const onRequest = async (context: any) => {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           crypto.randomUUID(),
-          exp.repository,
+          repoInfo.full_name,
           exp.experiment_code,
           new Date().toISOString(),
           'agent',
@@ -2274,13 +2359,15 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: exp.id });
       if (!perm.allowed) {
         return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), {
           status: 403,
           headers,
         });
       }
+
+      const repoInfo = await getWorkspaceRepository(env, expId, sessionUser);
 
       if (request.method === 'GET' || agentAction === 'context') {
         try {
@@ -2293,7 +2380,7 @@ export const onRequest = async (context: any) => {
                   id: exp.id,
                   code: exp.experiment_code,
                   name: exp.name,
-                  repository: exp.repository,
+                  repository: repoInfo.full_name,
                   course_id: exp.course_id,
                   report_mode: exp.report_mode || 'shared',
                   status: exp.status,
@@ -2403,7 +2490,7 @@ export const onRequest = async (context: any) => {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           crypto.randomUUID(),
-          exp.repository,
+          repoInfo.full_name,
           exp.experiment_code,
           nowIso,
           'agent',
@@ -2458,7 +2545,7 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: exp.id });
       if (!perm.allowed) {
         return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), { status: 403, headers });
       }
@@ -2527,6 +2614,7 @@ export const onRequest = async (context: any) => {
           const nowIso = new Date().toISOString();
           const logId = crypto.randomUUID();
           try {
+            const repoInfo = await getWorkspaceRepository(env, expId, sessionUser);
             await env.DB.prepare(
               `INSERT INTO activity_logs (
                 id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
@@ -2534,7 +2622,7 @@ export const onRequest = async (context: any) => {
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).bind(
               logId,
-              exp.repository,
+              repoInfo.full_name,
               exp.experiment_code,
               nowIso,
               'web',
@@ -2592,7 +2680,7 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: exp.id });
       if (!perm.allowed) {
         return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), { status: 403, headers });
       }
@@ -2680,6 +2768,7 @@ export const onRequest = async (context: any) => {
         const nowIso = new Date().toISOString();
         const logId = crypto.randomUUID();
         try {
+          const repoInfo = await getWorkspaceRepository(env, expId, sessionUser);
           await env.DB.prepare(
             `INSERT INTO activity_logs (
               id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
@@ -2687,7 +2776,7 @@ export const onRequest = async (context: any) => {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).bind(
             logId,
-            exp.repository,
+            repoInfo.full_name,
             exp.experiment_code,
             nowIso,
             'web',
@@ -2744,7 +2833,7 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: exp.repository });
+      const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: exp.id });
       if (!perm.allowed) {
         return new Response(JSON.stringify({ error: 'Forbidden: User is not an active collaborator of this workspace' }), { status: 403, headers });
       }
@@ -2877,6 +2966,7 @@ export const onRequest = async (context: any) => {
         const nowIso = new Date().toISOString();
         const logId = crypto.randomUUID();
         try {
+          const repoInfo = await getWorkspaceRepository(env, expId, sessionUser);
           await env.DB.prepare(
             `INSERT INTO activity_logs (
               id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
@@ -2884,7 +2974,7 @@ export const onRequest = async (context: any) => {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).bind(
             logId,
-            exp.repository,
+            repoInfo.full_name,
             exp.experiment_code,
             nowIso,
             'web',
@@ -2966,7 +3056,7 @@ export const onRequest = async (context: any) => {
         if (!expRow) {
           return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
         }
-        const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: expRow.repository });
+        const perm = await resolveExperimentPermission(env, sessionUser, { experiment_id: expRow.id });
         if (!perm.allowed) {
           return new Response(JSON.stringify({ error: 'Access denied' }), { status: 404, headers });
         }

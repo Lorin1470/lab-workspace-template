@@ -44,13 +44,18 @@ class MockManagementD1 {
       bind: (...binds) => ({
         run: async () => {
           if (q.startsWith('INSERT INTO courses')) {
-            const [id, course_code, name, semester, status, created_by_github_id, created_at, updated_at] = binds;
+            let [id, course_code, name, semester, status, created_by_github_id, created_at, updated_at] = binds;
+            let mode = 'experiment';
+            let github_repository = null;
+            if (binds.length >= 10) {
+              [id, course_code, name, semester, status, mode, github_repository, created_by_github_id, created_at, updated_at] = binds;
+            }
             for (const c of this.courses.values()) {
               if (c.course_code === course_code && c.semester === semester) {
                 throw new Error(`UNIQUE constraint failed: courses.course_code, courses.semester`);
               }
             }
-            this.courses.set(id, { id, course_code, name, semester, status: status || 'active', created_by_github_id, created_at: created_at || new Date().toISOString(), updated_at: updated_at || new Date().toISOString() });
+            this.courses.set(id, { id, course_code, name, semester, status: status || 'active', mode: mode || 'experiment', github_repository, created_by_github_id, created_at: created_at || new Date().toISOString(), updated_at: updated_at || new Date().toISOString() });
             return { success: true };
           }
           if (q.startsWith('UPDATE courses SET')) {
@@ -80,7 +85,7 @@ class MockManagementD1 {
           if (q.startsWith('INSERT INTO experiments')) {
             const [id, course_id, experiment_code, name, repository, report_mode, config_version, status, created_at, updated_at] = binds;
             for (const e of this.experiments.values()) {
-              if (e.repository === repository) {
+              if (repository && e.repository === repository) {
                 throw new Error(`UNIQUE constraint failed: experiments.repository`);
               }
               if (e.course_id === course_id && e.experiment_code === experiment_code) {

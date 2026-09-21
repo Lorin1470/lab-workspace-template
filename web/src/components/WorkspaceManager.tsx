@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Experiment,
+  Course,
   AuthUser,
   WorkspaceFileItem,
   WorkspaceFileContent,
@@ -35,6 +36,7 @@ import {
 
 interface WorkspaceManagerProps {
   experiment: Experiment;
+  course?: Course | null;
   user: AuthUser | null;
   isCollaborator: boolean;
   onActivityRefresh?: () => void;
@@ -228,12 +230,18 @@ const SimpleMarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
 
 export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
   experiment,
+  course,
   user,
   isCollaborator,
   onActivityRefresh,
   onError,
   onSuccess,
 }) => {
+  const repositoryFullName = experiment.repository || course?.github_repository || '';
+  const isCourseMode = course?.mode === 'course';
+  const getScopedPath = (path: string) =>
+    isCourseMode ? `experiments/${experiment.experiment_code}/${path}` : path;
+
   // 檔案樹狀態
   const [rootItems, setRootItems] = useState<WorkspaceFileItem[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
@@ -656,8 +664,13 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
             <div className="flex items-center space-x-2">
               <h3 className="font-bold text-sm text-slate-800">實驗 GitHub Workspace</h3>
               <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono">
-                {experiment.repository}
+                {repositoryFullName}
               </span>
+              {isCourseMode && (
+                <span className="text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-mono border border-blue-200">
+                  experiments/{experiment.experiment_code}/
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
               同學共同維護的實驗儲存庫。每次儲存或上傳將產生真實 GitHub Git Commit。
@@ -739,9 +752,9 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
           <div className="flex items-center space-x-2 text-[11px] text-emerald-700">
             <Clock className="w-3 h-3" />
             <span>{lastOperation.time}</span>
-            {experiment.repository && (
+            {repositoryFullName && (
               <a
-                href={`https://github.com/${experiment.repository}/commit/${lastOperation.commit_sha}`}
+                href={`https://github.com/${repositoryFullName}/commit/${lastOperation.commit_sha}`}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center space-x-1 text-emerald-800 underline hover:text-emerald-950 font-medium ml-2"
@@ -817,9 +830,9 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                       {currentFile?.size !== undefined && (
                         <span>大小: {formatFileSize(currentFile.size)}</span>
                       )}
-                      {experiment.repository && (
+                      {repositoryFullName && (
                         <a
-                          href={`https://github.com/${experiment.repository}/blob/main/${selectedPath}`}
+                          href={`https://github.com/${repositoryFullName}/blob/main/${getScopedPath(selectedPath)}`}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center space-x-0.5 text-blue-600 hover:underline"
@@ -933,7 +946,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                         src={
                           currentFile?.content_base64
                             ? `data:${imageMimeType(selectedPath)};base64,${currentFile.content_base64}`
-                            : `https://raw.githubusercontent.com/${experiment.repository}/main/${selectedPath}`
+                            : `https://raw.githubusercontent.com/${repositoryFullName}/main/${getScopedPath(selectedPath)}`
                         }
                         alt={selectedPath}
                         className="max-h-80 w-auto object-contain mx-auto rounded"
@@ -957,9 +970,9 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                       </div>
                     </div>
 
-                    {experiment.repository && (
+                    {repositoryFullName && (
                       <a
-                        href={`https://github.com/${experiment.repository}/blob/main/${selectedPath}`}
+                        href={`https://github.com/${repositoryFullName}/blob/main/${getScopedPath(selectedPath)}`}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg transition-colors shadow-xs"
