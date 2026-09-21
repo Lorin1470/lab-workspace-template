@@ -31,6 +31,7 @@ export interface WorkspaceRepoInfo {
   default_branch: string;
   report_mode: 'shared' | 'separate';
   provisioning_status: string;
+  scopePrefix?: string; // e.g., "experiments/lab-01/" for course mode, "" for experiment mode
 }
 
 export interface WorkspaceFileItem {
@@ -288,11 +289,30 @@ function encodeRepoPathForUrl(path: string): string {
  * 1. 取得實驗綁定的 GitHub repository 與工作區資訊
  * 嚴禁 caller 隨意傳入 owner/repo，必須由 D1 experimentId 查詢綁定
  */
-export async function getWorkspaceRepository(
+export interface WorkspaceResolvedTarget {
+  repository: string; // "owner/repo"
+  scopePrefix: string; // "experiments/<experiment-code>/" for course mode, "" for experiment mode
+  owner: string;
+  repo: string;
+  mode: 'course' | 'experiment';
+}
+
+/**
+ * 核心 Workspace 儲存庫與路徑解析器 (Workspace Repository Resolver)
+ * Course mode：
+ *   repository = course.github_repository ("owner/repo")
+ *   scopePrefix = "experiments/<experiment-code>/"
+ * Experiment mode：
+ *   repository = experiment.repository ("owner/repo")
+ *   scopePrefix = ""
+ *
+ * 鐵律：GitHub API 中 repository 永遠是 owner/repo，experiments/<experiment-code>/ 只能是 path，絕對不能拼進 repository name
+ */
+export async function resolveWorkspaceRepository(
   env: any,
   experimentId: string,
   sessionUser?: WorkspaceSessionUser | null
-): Promise<WorkspaceRepoInfo> {
+): Promise<{ exp: any; course: any; resolved: WorkspaceResolvedTarget }> {
   if (!experimentId || typeof experimentId !== 'string') {
     throw new WorkspaceError(400, 'Invalid or missing experiment ID');
   }
@@ -312,6 +332,17 @@ export async function getWorkspaceRepository(
     throw new WorkspaceError(404, `Experiment '${experimentId}' not found`);
   }
 
+  // 查詢課程資料以決定架構模式
+  const course: any = await safeD1First(
+    env.DB.prepare(
+      'SELECT id, mode, github_repository FROM courses WHERE id = ?'
+    ).bind(exp.course_id)
+  );
+
+  if (!course) {
+    throw new WorkspaceError(500, `Course '${exp.course_id}' not found for experiment '${experimentId}'`);
+  }
+
   // 驗證協作者身分 (若有 sessionUser)
   if (sessionUser && sessionUser.github_id) {
     const mem: any = await safeD1First(
@@ -324,31 +355,86 @@ export async function getWorkspaceRepository(
     }
   }
 
-  // 驗證 Repository 綁定格式
-  const repo = exp.repository;
-  if (!repo || typeof repo !== 'string') {
-    throw new WorkspaceError(400, `Experiment '${experimentId}' has no repository bound`);
+  const mode: 'course' | 'experiment' = course.mode === 'course' ? 'course' : 'experiment';
+  let repository: string;
+  let scopePrefix: string;
+
+  if (mode === 'course') {
+    // 課程模式：使用課程的 github_repository，路徑隔離於 experiments/<experiment_code>/
+    if (!course.github_repository || typeof course.github_repository !== 'string') {
+      throw new WorkspaceError(400, `Course '${exp.course_id}' is in course mode but missing github_repository`);
+    }
+    const match = course.github_repository.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
+    if (!match) {
+      throw new WorkspaceError(400, `Invalid course github_repository format: '${course.github_repository}'`);
+    }
+    repository = course.github_repository;
+    scopePrefix = `experiments/${exp.experiment_code}/`;
+  } else {
+    // 實驗模式：使用實驗自身綁定的 repository，scopePrefix 為空
+    const repo = exp.repository;
+    if (!repo || typeof repo !== 'string') {
+      throw new WorkspaceError(400, `Experiment '${experimentId}' has no repository bound`);
+    }
+    const match = repo.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
+    if (!match) {
+      throw new WorkspaceError(400, `Invalid repository format in binding: '${repo}'`);
+    }
+    repository = repo;
+    scopePrefix = '';
   }
 
-  const match = repo.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
-  if (!match) {
-    throw new WorkspaceError(400, `Invalid repository format in binding: '${repo}'`);
-  }
+  const [owner, repoName] = repository.split('/');
+  return {
+    exp,
+    course,
+    resolved: {
+      repository,
+      scopePrefix,
+      owner,
+      repo: repoName,
+      mode,
+    },
+  };
+}
 
-  const [_, owner, repoName] = match;
+/**
+ * 組合 scopePrefix 與實驗相對路徑為 GitHub 儲存庫內之真實路徑
+ */
+export function resolveScopedPath(scopePrefix: string, relativePath: string): string {
+  const cleanPrefix = scopePrefix || '';
+  const cleanPath = relativePath || '';
+  if (!cleanPath) {
+    return cleanPrefix.replace(/\/$/, '');
+  }
+  return `${cleanPrefix}${cleanPath}`;
+}
+
+/**
+ * 1. 取得實驗綁定的 GitHub repository 與工作區資訊
+ * 嚴禁 caller 隨意傳入 owner/repo，必須由 D1 experimentId 查詢綁定
+ */
+export async function getWorkspaceRepository(
+  env: any,
+  experimentId: string,
+  sessionUser?: WorkspaceSessionUser | null
+): Promise<WorkspaceRepoInfo> {
+  const { exp, resolved } = await resolveWorkspaceRepository(env, experimentId, sessionUser);
 
   return {
     experiment_id: exp.id,
     experiment_code: exp.experiment_code,
     course_id: exp.course_id,
     name: exp.name,
-    owner,
-    repo: repoName,
-    full_name: repo,
-    html_url: `https://github.com/${repo}`,
+    owner: resolved.owner,
+    repo: resolved.repo,
+    full_name: resolved.repository,
+    html_url: `https://github.com/${resolved.repository}`,
     default_branch: 'main',
     report_mode: exp.report_mode || 'shared',
     provisioning_status: exp.provisioning_status || 'pending',
+    scopePrefix: resolved.scopePrefix,
+    mode: resolved.mode,
   };
 }
 
@@ -366,7 +452,8 @@ export async function listFiles(
   const normPath = validateWorkspacePath(dirPath, { allowEmpty: true });
 
   const token = await obtainInstallationToken(env, fetchFn);
-  const encodedPath = encodeRepoPathForUrl(normPath);
+  const targetPath = resolveScopedPath(repoInfo.scopePrefix || '', normPath);
+  const encodedPath = encodeRepoPathForUrl(targetPath);
   const url = encodedPath
     ? `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodedPath}`
     : `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents`;
@@ -398,14 +485,21 @@ export async function listFiles(
   const data: any = await res.json();
   const rawList = Array.isArray(data) ? data : [data];
 
-  const items: WorkspaceFileItem[] = rawList.map((item: any) => ({
-    path: item.path,
-    name: item.name,
-    type: item.type === 'dir' ? 'directory' : 'file',
-    size: typeof item.size === 'number' ? item.size : undefined,
-    sha: item.sha,
-    download_url: item.download_url || null,
-  }));
+  const items: WorkspaceFileItem[] = rawList.map((item: any) => {
+    let clientPath = item.path;
+    const prefix = repoInfo.scopePrefix || '';
+    if (prefix && clientPath.startsWith(prefix)) {
+      clientPath = clientPath.slice(prefix.length);
+    }
+    return {
+      path: clientPath,
+      name: item.name,
+      type: item.type === 'dir' ? 'directory' : 'file',
+      size: typeof item.size === 'number' ? item.size : undefined,
+      sha: item.sha,
+      download_url: item.download_url || null,
+    };
+  });
 
   // 排序：目錄優先，其餘依照名稱英數字排序
   items.sort((a, b) => {
@@ -432,8 +526,8 @@ export async function readFile(
   const normPath = validateWorkspacePath(filePath, { allowEmpty: false });
 
   const token = await obtainInstallationToken(env, fetchFn);
-  const encodedPath = encodeRepoPathForUrl(normPath);
-  const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodedPath}`;
+  const targetPath = resolveScopedPath(repoInfo.scopePrefix || '', normPath);
+  const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodeRepoPathForUrl(targetPath)}`;
 
   const res = await safeFetch(fetchFn, url, {
     method: 'GET',
@@ -519,7 +613,8 @@ export async function createOrUpdateFile(
     }
     // 專用 Raw API 檢查：嚴禁覆寫既有 Raw 資料 (Strictly Immutable)
     const token = await obtainInstallationToken(env, fetchFn);
-    const encodedPath = encodeRepoPathForUrl(normPath);
+    const targetPath = resolveScopedPath(repoInfo.scopePrefix || '', normPath);
+    const encodedPath = encodeRepoPathForUrl(targetPath);
     const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodedPath}`;
     const headers = {
       Authorization: `Bearer ${token}`,
@@ -560,8 +655,8 @@ export async function createOrUpdateFile(
   }
 
   const token = await obtainInstallationToken(env, fetchFn);
-  const encodedPath = encodeRepoPathForUrl(normPath);
-  const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodedPath}`;
+  const targetPath = resolveScopedPath(repoInfo.scopePrefix || '', normPath);
+  const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodeRepoPathForUrl(targetPath)}`;
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -659,7 +754,8 @@ export async function createOrUpdateBinaryFile(
     }
     // 專用 Raw API 檢查：嚴禁覆寫既有 Raw 資料 (Strictly Immutable)
     const token = await obtainInstallationToken(env, fetchFn);
-    const encodedPath = encodeRepoPathForUrl(normPath);
+    const targetPath = resolveScopedPath(repoInfo.scopePrefix || '', normPath);
+    const encodedPath = encodeRepoPathForUrl(targetPath);
     const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodedPath}`;
     const headers = {
       Authorization: `Bearer ${token}`,
@@ -722,8 +818,8 @@ export async function createOrUpdateBinaryFile(
   }
 
   const token = await obtainInstallationToken(env, fetchFn);
-  const encodedPath = encodeRepoPathForUrl(normPath);
-  const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodedPath}`;
+  const targetPath = resolveScopedPath(repoInfo.scopePrefix || '', normPath);
+  const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodeRepoPathForUrl(targetPath)}`;
 
   const headers = {
     Authorization: `Bearer ${token}`,

@@ -76,6 +76,7 @@ export interface AuthUser {
 
 export type CourseRole = 'teacher' | 'assistant' | 'student' | 'guest';
 export type ExperimentRole = 'assistant' | 'student';
+export type CourseMode = 'course' | 'experiment';
 
 export interface Course {
   id: string;
@@ -83,6 +84,8 @@ export interface Course {
   name: string;
   semester: string;
   status: 'active' | 'archived' | 'inactive';
+  mode?: CourseMode;
+  github_repository?: string | null;
   created_by_github_id?: string | null;
   created_at: string;
   updated_at: string;
@@ -93,6 +96,8 @@ export interface CreateCourseRequest {
   course_code: string;
   name: string;
   semester: string;
+  mode?: CourseMode;
+  github_repository?: string;
 }
 
 export interface UpdateCourseRequest {
@@ -105,7 +110,7 @@ export interface CreateExperimentRequest {
   course_id: string;
   experiment_code: string;
   name: string;
-  repository: string;
+  repository?: string;
   report_mode?: ReportMode;
 }
 
@@ -174,7 +179,7 @@ export interface Experiment {
   course_id: string;
   experiment_code: string;
   name: string;
-  repository: string;
+  repository: string | null;
   report_mode: ReportMode;
   config_version: string;
   status: ExperimentStatus;

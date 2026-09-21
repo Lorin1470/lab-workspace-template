@@ -91,6 +91,8 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   onError,
   onSuccess,
 }) => {
+  const isCourseMode = course?.mode === 'course';
+  const resolvedRepo = experiment.repository || course?.github_repository || '';
   const [activeTab, setActiveTab] = useState<TabType>('activity');
   const [members, setMembers] = useState<ExperimentMembership[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
@@ -260,9 +262,14 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
 
   // 載入活動日誌
   const loadActivityLogs = async () => {
+    if (!resolvedRepo) {
+      setActivityLogs([]);
+      setLogsLoading(false);
+      return;
+    }
     setLogsLoading(true);
     try {
-      const data = await api.activity.list(experiment.repository, experiment.experiment_code, activityLimit);
+      const data = await api.activity.list(resolvedRepo, experiment.experiment_code, activityLimit);
       setActivityLogs(data.logs);
     } catch (err: any) {
       setActivityLogs([]);
@@ -296,9 +303,9 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         onExperimentUpdated(res.experiment);
       }
       if (res.already_existed) {
-        onSuccess(`儲存庫 ${res.repository?.full_name || experiment.repository} 已存在，已自動連結至本專案！`);
+        onSuccess(`儲存庫 ${res.repository?.full_name || resolvedRepo} 已存在，已自動連結至本專案！`);
       } else {
-        onSuccess(`儲存庫 ${res.repository?.full_name || experiment.repository} 建立成功！`);
+        onSuccess(`儲存庫 ${res.repository?.full_name || resolvedRepo} 建立成功！`);
       }
       loadActivityLogs();
     } catch (err: any) {
@@ -321,7 +328,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     setEditName(experiment.name);
     setEditReportMode(experiment.report_mode);
     setEditStatus(experiment.status);
-  }, [experiment.id, experiment.repository, activityLimit]);
+  }, [experiment.id, experiment.repository, course?.github_repository, activityLimit]);
 
   // 更新實驗設定
   const handleUpdateExperiment = async (e: React.FormEvent) => {
@@ -541,15 +548,20 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               <h2 className="text-2xl font-bold text-slate-900 mt-1.5">{experiment.name}</h2>
               <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1 font-mono">
                 <a
-                  href={`https://github.com/${experiment.repository}`}
+                  href={`https://github.com/${resolvedRepo}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-800 font-semibold"
                 >
                   <FolderGit2 className="w-3.5 h-3.5" />
-                  <span>{experiment.repository}</span>
+                  <span>{resolvedRepo}</span>
                   <ExternalLink className="w-3 h-3" />
                 </a>
+                {isCourseMode && (
+                  <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
+                    路徑：experiments/{experiment.experiment_code}/
+                  </span>
+                )}
                 <span>•</span>
                 <span>Template v{experiment.config_version}</span>
               </div>
@@ -575,10 +587,11 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   <button
                     onClick={handleProvision}
                     disabled={isProvisioning}
-                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-sm disabled:opacity-50"
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-xs"
+                    title="初始化遠端 GitHub 儲存庫"
                   >
                     <FolderGit2 className="w-3.5 h-3.5" />
-                    <span>建立 GitHub 儲存庫</span>
+                    <span>建立儲存庫</span>
                   </button>
                 )}
 
@@ -617,7 +630,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             )}
 
             <a
-              href={`https://github.com/${experiment.repository}`}
+              href={`https://github.com/${resolvedRepo}`}
               target="_blank"
               rel="noopener noreferrer"
               className={`inline-flex items-center space-x-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-colors ${
@@ -642,7 +655,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   遠端儲存庫建立中 (Provisioning in progress)
                 </p>
                 <p className="text-blue-700 mt-0.5">
-                  系統正調用 GitHub App 依據官方範本 (<span className="font-mono">Lorin1470/lab-workspace-template</span>) 初始化工作區 <span className="font-mono font-semibold">{experiment.repository}</span>。此程序約需數秒，請稍候...
+                  系統正調用 GitHub App 依據官方範本 (<span className="font-mono">Lorin1470/lab-workspace-template</span>) 初始化工作區 <span className="font-mono font-semibold">{resolvedRepo}</span>{isCourseMode ? ` (路徑: experiments/${experiment.experiment_code}/)` : ''}。此程序約需數秒，請稍候...
                 </p>
               </div>
             </div>
@@ -690,7 +703,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   尚未建立遠端儲存庫 (Pending Provisioning)
                 </p>
                 <p className="text-amber-800 mt-0.5">
-                  目標儲存庫：<span className="font-mono font-semibold">{experiment.repository}</span>。
+                  目標儲存庫：<span className="font-mono font-semibold">{resolvedRepo}</span>{isCourseMode ? ` (路徑: experiments/${experiment.experiment_code}/)` : ''}。
                   {isCollaborator
                     ? ' 協作者可直接點擊右側按鈕，系統將自動透過 GitHub App 與官方範本初始化該儲存庫。'
                     : ' 此實驗專案尚未在 GitHub 上初始化，請待專案協作者完成遠端儲存庫建立。'}
@@ -727,12 +740,12 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               </div>
             </div>
             <a
-              href={`https://github.com/${experiment.repository}`}
+              href={isCourseMode ? `https://github.com/${resolvedRepo}/tree/main/experiments/${experiment.experiment_code}` : `https://github.com/${resolvedRepo}`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center space-x-1 text-emerald-700 hover:text-emerald-900 font-semibold underline shrink-0"
             >
-              <span>查看 GitHub 倉庫</span>
+              <span>查看 GitHub 倉庫{isCourseMode ? ' (實驗目錄)' : ''}</span>
               <ExternalLink className="w-3 h-3" />
             </a>
           </div>
@@ -913,7 +926,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                           {log.approved_by && <span>核准人: @{log.approved_by}</span>}
                           {log.commit_sha && (
                             <a
-                              href={`https://github.com/${log.repo_name || experiment.repository}/commit/${log.commit_sha}`}
+                              href={`https://github.com/${log.repo_name || resolvedRepo}/commit/${log.commit_sha}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-800 font-semibold"
@@ -1086,7 +1099,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-sm space-y-1">
                 <div><strong>實驗代碼</strong>：{experiment.experiment_code}</div>
                 <div><strong>報告模式</strong>：{experiment.report_mode === 'shared' ? '全組共同撰寫 (shared)' : '不可變 GitHub ID 個別撰寫 (separate)'}</div>
-                <div><strong>所屬 Repository</strong>：{experiment.repository}</div>
+                <div><strong>所屬 Repository</strong>：{resolvedRepo} {isCourseMode && <span className="text-slate-500 font-mono">(experiments/{experiment.experiment_code}/)</span>}</div>
               </div>
 
               <h3 className="text-lg font-bold text-slate-900 pt-2">一、實驗目的與規格</h3>
@@ -1106,6 +1119,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         {activeTab === 'files' && (
           <WorkspaceManager
             experiment={experiment}
+            course={course}
             user={user}
             isCollaborator={isCollaborator}
             onActivityRefresh={loadActivityLogs}
@@ -1665,7 +1679,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   <span>GitHub 儲存庫建立紀錄</span>
                 </h3>
                 <p className="text-xs text-slate-500 font-mono mt-0.5">
-                  {experiment.repository} ({experiment.experiment_code})
+                  {resolvedRepo} ({experiment.experiment_code})
                 </p>
               </div>
               <div className="flex items-center space-x-2">

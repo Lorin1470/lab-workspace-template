@@ -162,10 +162,13 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
   // 建立實驗
   const handleCreateExperiment = async (e: React.FormEvent) => {
     e.preventDefault();
-    const repoRegex = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-    if (!repoRegex.test(newExpRepo.trim())) {
-      setModalError('Repository 格式錯誤：必須為 owner/repo (例如：example-org/ee201-lab-01)');
-      return;
+    const isCourseMode = course.mode === 'course';
+    if (!isCourseMode) {
+      const repoRegex = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
+      if (!repoRegex.test(newExpRepo.trim())) {
+        setModalError('Repository 格式錯誤：必須為 owner/repo (例如：example-org/ee201-lab-01)');
+        return;
+      }
     }
 
     setFormSubmitting(true);
@@ -175,7 +178,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
         course_id: course.id,
         experiment_code: newExpCode.trim(),
         name: newExpName.trim(),
-        repository: newExpRepo.trim(),
+        repository: isCourseMode ? undefined : newExpRepo.trim(),
         report_mode: newExpReportMode,
       });
       onSuccess(`實驗專案「${created.experiment_code}」建立成功！`);
@@ -414,7 +417,9 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-slate-500">
-              遵循「一節課一 Repo」架構，各實驗專案獨立擁有獨立的 Git 工作區與稽核日誌。
+              {course.mode === 'course'
+                ? `課程模式：共用儲存庫 ${course.github_repository || ''}，各實驗於 experiments/<code\>/ 目錄隔離。`
+                : '實驗模式：各實驗專案各自綁定獨立的 GitHub Repository 與 Git 工作區。'}
             </p>
 
             {isCollaborator && course.status === 'active' && (
@@ -470,7 +475,11 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
 
                       <p className="text-xs text-slate-400 font-mono mt-1 flex items-center space-x-1">
                         <FolderGit2 className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{exp.repository}</span>
+                        <span className="truncate">
+                          {course.mode === 'course'
+                            ? `${course.github_repository} (experiments/${exp.experiment_code}/)`
+                            : (exp.repository || '未綁定')}
+                        </span>
                       </p>
 
                       <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
@@ -733,22 +742,36 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  GitHub Repository (owner/repo) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如：example-org/ee201-lab-01"
-                  value={newExpRepo}
-                  onChange={(e) => setNewExpRepo(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-mono"
-                  required
-                />
-                <p className="text-[11px] text-slate-400 mt-1">
-                  一節課一 Repo 唯一綁定。建立實驗後，協作者可於實驗詳情頁一鍵透過 GitHub App 初始化遠端儲存庫。
-                </p>
-              </div>
+              {course.mode === 'course' ? (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    共用課程儲存庫 (Course Repository)
+                  </label>
+                  <div className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-mono text-sm">
+                    {course.github_repository || '尚未綁定'}
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    課程模式下，所有實驗共用此儲存庫，本實驗路徑將隔離於 <code className="font-mono text-blue-600 font-semibold">experiments/{newExpCode.trim() || '<experiment-code>'}/</code>。
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    GitHub Repository (owner/repo) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="例如：example-org/ee201-lab-01"
+                    value={newExpRepo}
+                    onChange={(e) => setNewExpRepo(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    實驗模式：一節課一 Repo 唯一綁定。建立實驗後，協作者可於實驗詳情頁一鍵透過 GitHub App 初始化遠端儲存庫。
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">報告撰寫模式</label>
