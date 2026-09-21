@@ -5,7 +5,7 @@
 [![Skill Version](https://img.shields.io/badge/Skill%20Version-1.0-purple.svg)](.github/skills/experiment-report/SKILL.md)
 [![Platform: Cloudflare](https://img.shields.io/badge/Platform-Cloudflare%20Pages%20%2B%20Workers-orange.svg)](web/)
 
-一套為大專院校工程與科學實驗課程打造的「**一節課一 Repo**」長期複用型實驗工作區系統。
+一套為大專院校工程與科學實驗課程打造的「**課程→多實驗→實驗綁定 Repository**」長期複用型實驗工作區系統。
 
 結合 **GitHub 開放源碼託管（Source of Truth）**、**AI Agent 協作規範（Agent Skill）**、**Cloudflare 集中式網頁介面（Web UI）** 與 **嚴格的使用者審核確認機制**，讓每一節實驗課的數據清洗、波形照片、特性曲線分析與實驗報告撰寫，都能標準化、可追溯且長期維護。
 
@@ -14,7 +14,7 @@
 ## 📑 目錄
 
 1. [這套系統是什麼？](#1-這套系統是什麼)
-2. [核心理念：一節課一個 Repo](#2-核心理念一節課一個-repo)
+2. [核心理念：課程→多實驗→實驗綁定 Repository](#2-核心理念課程-多實驗-實驗綁定-repository)
 3. [AI Agent Skill 協作規範](#3-ai-agent-skill-協作規範)
 4. [Cloudflare Web UI 集中介面](#4-cloudflare-web-ui-集中介面)
 5. [資料保存原則：GitHub 為唯一真實源](#5-資料保存原則github-為唯一真實源)
@@ -37,9 +37,12 @@
 
 ---
 
-## 2. 核心理念：一節課一個 Repo
+## 2. 核心理念：課程 → 多實驗 → 實驗綁定 Repository
 
-系統堅持：**「一節課 = 一個 GitHub Repository」**。
+系統採用 **「課程 → 多實驗 → 實驗綁定 Repository」** 的階層模型：
+* 一門課程可以容納多個實驗（例如：電子學實驗課包含電路實驗、訊號處理實驗等）
+* 每個實驗獨立綁定一個 GitHub Repository 作為其工作區
+* 每個實驗 Repository 僅能綁定單一實驗（一對一映射），確保資料隔離與追溯性
 
 ```
                        ┌──────────────────────────────────────────────┐
@@ -50,9 +53,12 @@
                                               ▼
     ┌─────────────────────────┬─────────────────────────┬─────────────────────────┐
     ▼                         ▼                         ▼                         ▼
-實際實驗 Repo             實際實驗 Repo             實際實驗 Repo             實際實驗 Repo
-electronics-lab-01        electronics-lab-02        digital-logic-lab-01      physics-lab-01
-(單一實驗工作區)           (單一實驗工作區)           (單一實驗工作區)           (單一實驗工作區)
+電子學實驗-01             電子學實驗-02             數位邏輯實驗-01           物理實驗-01
+(電子學課程實驗)           (電子學課程實驗)           (數位邏輯課程實驗)        (物理課程實驗)
+     │                          │                          │                          │
+     ▼                          ▼                          ▼                          ▼
+electronics-lab-01      electronics-lab-02      digital-logic-lab-01    physics-lab-01
+(單一實驗工作區)          (單一實驗工作區)          (單一實驗工作區)          (單一實驗工作區)
 ```
 
 ### 每個實驗 Repo 的標準結構：
@@ -69,6 +75,14 @@ lab-XX-name/
     └── SKILL.md                         # 本實驗專屬 Agent Skill 規範 (v1.0)
 ```
 
+### 課程與實驗的資料模型（參考 D1 Schema）：
+* **courses 表**：儲存課程資訊（course_code, name, semester 等）
+* **experiments 表**：每筆記錄代表一個實驗，包含：
+  * `course_id`：所屬課程的外鍵
+  * `experiment_code`：實驗代號（如 "lab-01"）
+  * `repository`：綁定的 GitHub Repository 全名（唯一限制，確保一個 Repo 只綁定一個實驗）
+  * `report_mode`：報告模式（shared 或 separate）
+* 一門課程可對應多筆實驗記錄，形成一對多關係
 ---
 
 ## 3. AI Agent Skill 協作規範
