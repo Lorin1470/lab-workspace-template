@@ -28,7 +28,7 @@ interface CourseDetailProps {
   course: Course;
   user: AuthUser | null;
   onBack: () => void;
-  onSelectExperiment: (exp: Experiment) => void;
+  onSelectExperiment: (exp: Experiment, initialTab?: 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download' | 'agent') => void;
   onCourseUpdated: (updated: Course) => void;
   onError: (msg: string) => void;
   onSuccess: (msg: string) => void;
@@ -281,6 +281,9 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
   };
 
   const renderProvBadge = (status?: string) => {
+    if (course.mode === 'course') {
+      return null;
+    }
     switch (status) {
       case 'ready':
         return (
@@ -418,7 +421,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
           <div className="flex items-center justify-between">
             <p className="text-sm text-slate-500">
               {course.mode === 'course'
-                ? `課程模式：共用儲存庫 ${course.github_repository || ''}，各實驗於 experiments/<code\>/ 目錄隔離。`
+                ? `課程模式：共用儲存庫 ${course.github_repository || ''}，為各實驗提供專屬工作空間。`
                 : '實驗模式：各實驗專案各自綁定獨立的 GitHub Repository 與 Git 工作區。'}
             </p>
 
@@ -453,7 +456,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                 return (
                   <div
                     key={exp.id}
-                    onClick={() => onSelectExperiment(exp)}
+                    onClick={() => onSelectExperiment(exp, 'files')}
                     className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md hover:border-blue-400 transition-all cursor-pointer flex flex-col justify-between group"
                   >
                     <div>
@@ -477,7 +480,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                         <FolderGit2 className="w-3 h-3 shrink-0" />
                         <span className="truncate">
                           {course.mode === 'course'
-                            ? `${course.github_repository} (experiments/${exp.experiment_code}/)`
+                            ? course.github_repository
                             : (exp.repository || '未綁定')}
                         </span>
                       </p>
@@ -751,7 +754,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                     {course.github_repository || '尚未綁定'}
                   </div>
                   <p className="text-[11px] text-slate-500 mt-1">
-                    課程模式下，所有實驗共用此儲存庫，本實驗路徑將隔離於 <code className="font-mono text-blue-600 font-semibold">experiments/{newExpCode.trim() || '<experiment-code>'}/</code>。
+                    課程模式下，所有實驗共用此儲存庫。系統會自動建立本實驗的專屬工作空間。
                   </p>
                 </div>
               ) : (

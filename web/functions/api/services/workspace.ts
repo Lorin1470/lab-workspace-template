@@ -70,6 +70,7 @@ export interface WorkspaceServiceOptions {
 export interface WorkspaceSessionUser {
   github_id: string | number;
   username?: string;
+  role?: string;
 }
 
 /**
@@ -524,6 +525,23 @@ export async function readFile(
 ): Promise<WorkspaceFileContent> {
   const repoInfo = await getWorkspaceRepository(env, experimentId, sessionUser);
   const normPath = validateWorkspacePath(filePath, { allowEmpty: false });
+
+  // Separate Report 個人報告隔離防護 (讀取防護：協作者只能存取自己的個人報告，教師/助教可存取所有報告)
+  if (repoInfo.report_mode === 'separate' && normPath.startsWith('report/')) {
+    if (sessionUser && sessionUser.github_id) {
+      const isTeacherOrAdmin = sessionUser.role === 'teacher' || sessionUser.role === 'admin' || sessionUser.role === 'assistant';
+      const isSelfReport =
+        normPath === `report/${sessionUser.github_id}.md` ||
+        normPath === `report/report-${sessionUser.github_id}.md` ||
+        normPath.startsWith(`report/${sessionUser.github_id}/`);
+      if (!isTeacherOrAdmin && !isSelfReport) {
+        throw new WorkspaceError(
+          403,
+          'Separate report mode violation: Collaborators can only access their personal report (report/<github_id>.md)'
+        );
+      }
+    }
+  }
 
   const token = await obtainInstallationToken(env, fetchFn);
   const targetPath = resolveScopedPath(repoInfo.scopePrefix || '', normPath);

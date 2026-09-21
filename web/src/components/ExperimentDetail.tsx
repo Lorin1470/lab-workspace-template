@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Experiment,
   Course,
@@ -34,18 +34,20 @@ import {
   Clock,
   History,
   X,
+  ChevronDown,
 } from 'lucide-react';
 import JSZip from 'jszip';
-import { WorkspaceManager } from './WorkspaceManager.tsx';
-
-
+import { WorkspaceManager, SimpleMarkdownViewer } from './WorkspaceManager.tsx';
+import { getReportRelativePath } from '../utils/workspace-ui.ts';
 
 interface ExperimentDetailProps {
   experiment: Experiment;
   course: Course | null;
   userRole?: CourseRole;
   user: AuthUser | null;
+  initialTab?: TabType;
   onBack: () => void;
+  onSelectExperiment?: (exp: Experiment, initialTab?: TabType) => void;
   onExperimentUpdated: (updated: Experiment) => void;
   onError: (msg: string) => void;
   onSuccess: (msg: string) => void;
@@ -86,19 +88,76 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   course,
   userRole,
   user,
+  initialTab = 'files',
   onBack,
+  onSelectExperiment,
   onExperimentUpdated,
   onError,
   onSuccess,
 }) => {
   const isCourseMode = course?.mode === 'course';
   const resolvedRepo = experiment.repository || course?.github_repository || '';
-  const [activeTab, setActiveTab] = useState<TabType>('activity');
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'files');
   const [members, setMembers] = useState<ExperimentMembership[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [membersLoading, setMembersLoading] = useState(false);
   const [activityLimit, setActivityLimit] = useState(50);
+
+  // 同步外部傳入的 initialTab 或當切換至其他實驗時更新
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [experiment.id, initialTab]);
+
+  // Lab Switcher: 讀取同課程所有實驗
+  const [courseExperiments, setCourseExperiments] = useState<Experiment[]>([]);
+  const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
+
+  useEffect(() => {
+    if (course?.id) {
+      api.experiments.listByCourse(course.id)
+        .then((list) => setCourseExperiments(list))
+        .catch(() => setCourseExperiments([]));
+    }
+  }, [course?.id]);
+
+  // 實驗報告讀取狀態 (依據 shared/separate 模式動態解析檔案路徑)
+  const [reportContent, setReportContent] = useState<string | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportNotFound, setReportNotFound] = useState(false);
+  const [reportSha, setReportSha] = useState<string | null>(null);
+
+  const currentReportPath = getReportRelativePath(experiment.report_mode, user?.github_id);
+
+  const loadReport = useCallback(async () => {
+    setReportLoading(true);
+    setReportError(null);
+    setReportNotFound(false);
+    try {
+      const file = await api.workspace.readFile(experiment.id, currentReportPath);
+      setReportContent(file.content);
+      setReportSha(file.sha);
+    } catch (err: any) {
+      const status = err?.status || (err instanceof ApiError ? err.status : 0);
+      if (status === 404) {
+        setReportNotFound(true);
+        setReportContent(null);
+      } else {
+        setReportError(err?.message || '讀取實驗報告失敗');
+      }
+    } finally {
+      setReportLoading(false);
+    }
+  }, [experiment.id, currentReportPath]);
+
+  useEffect(() => {
+    if (activeTab === 'report') {
+      loadReport();
+    }
+  }, [activeTab, loadReport]);
 
   // 權限判斷：只要是課程或實驗協作者，皆具備操作與管理權限
   const isCollaborator = Boolean(
@@ -480,6 +539,18 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   const statusInfo = expStatusMap[experiment.status] || expStatusMap.not_started;
 
   const renderProvisioningBadge = (status?: ProvisioningStatus) => {
+    if (isCourseMode) {
+      if (course?.github_repository) {
+        return (
+          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300">
+            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+            <span>儲存庫已就緒</span>
+          </span>
+        );
+      }
+      return null;
+    }
+
     switch (status) {
       case 'ready':
         return (
@@ -528,9 +599,56 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             </button>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-mono font-bold bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded">
-                  {experiment.experiment_code.toUpperCase()}
-                </span>
+                {courseExperiments.length > 1 ? (
+                  <div className="relative inline-block">
+                    <button
+                      type="button"
+                      onClick={() => setIsSwitcherOpen(!isSwitcherOpen)}
+                      className="inline-flex items-center space-x-1 text-xs font-mono font-bold bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded hover:bg-blue-200 transition-colors cursor-pointer"
+                      title="切換同課程實驗"
+                    >
+                      <span>{experiment.experiment_code.toUpperCase()}</span>
+                      <ChevronDown className="w-3 h-3 text-blue-600" />
+                    </button>
+
+                    {isSwitcherOpen && (
+                      <div className="absolute left-0 mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-lg z-30 py-1 max-h-60 overflow-y-auto">
+                        <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                          切換同課程實驗
+                        </div>
+                        {courseExperiments.map((exp) => (
+                          <button
+                            key={exp.id}
+                            type="button"
+                            onClick={() => {
+                              setIsSwitcherOpen(false);
+                              if (exp.id !== experiment.id) {
+                                onSelectExperiment?.(exp, activeTab);
+                              }
+                            }}
+                            className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 transition-colors cursor-pointer ${
+                              exp.id === experiment.id
+                                ? 'bg-blue-50/50 text-blue-700 font-semibold'
+                                : 'text-slate-700'
+                            }`}
+                          >
+                            <div className="truncate mr-2">
+                              <span className="font-mono font-bold">{exp.experiment_code}</span>
+                              <span className="ml-1.5 text-slate-500 truncate">{exp.name}</span>
+                            </div>
+                            {exp.id === experiment.id && (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-xs font-mono font-bold bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded">
+                    {experiment.experiment_code.toUpperCase()}
+                  </span>
+                )}
                 {course && (
                   <span className="text-xs text-slate-500 font-medium">
                     {course.name} ({course.course_code})
@@ -559,7 +677,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 </a>
                 {isCourseMode && (
                   <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
-                    路徑：experiments/{experiment.experiment_code}/
+                    工作區：{experiment.experiment_code.toUpperCase()}
                   </span>
                 )}
                 <span>•</span>
@@ -571,49 +689,53 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
           <div className="flex items-center space-x-2 self-end md:self-auto flex-wrap">
             {isCollaborator && (
               <>
-                <button
-                  onClick={() => {
-                    loadProvisionHistory();
-                    setIsHistoryOpen(true);
-                  }}
-                  className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
-                  title="檢視 GitHub 儲存庫建立紀錄"
-                >
-                  <History className="w-3.5 h-3.5" />
-                  <span>建立歷程</span>
-                </button>
+                {!isCourseMode && (
+                  <>
+                    <button
+                      onClick={() => {
+                        loadProvisionHistory();
+                        setIsHistoryOpen(true);
+                      }}
+                      className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                      title="檢視 GitHub 儲存庫建立紀錄"
+                    >
+                      <History className="w-3.5 h-3.5" />
+                      <span>建立歷程</span>
+                    </button>
 
-                {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
-                  <button
-                    onClick={handleProvision}
-                    disabled={isProvisioning}
-                    className="inline-flex items-center space-x-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-xs"
-                    title="初始化遠端 GitHub 儲存庫"
-                  >
-                    <FolderGit2 className="w-3.5 h-3.5" />
-                    <span>建立儲存庫</span>
-                  </button>
-                )}
+                    {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
+                      <button
+                        onClick={handleProvision}
+                        disabled={isProvisioning}
+                        className="inline-flex items-center space-x-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-xs"
+                        title="初始化遠端 GitHub 儲存庫"
+                      >
+                        <FolderGit2 className="w-3.5 h-3.5" />
+                        <span>建立儲存庫</span>
+                      </button>
+                    )}
 
-                {(experiment.provisioning_status === 'creating' || isProvisioning) && (
-                  <button
-                    disabled
-                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-100 text-blue-700 px-3 py-2 rounded-lg cursor-not-allowed"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>儲存庫建立中...</span>
-                  </button>
-                )}
+                    {(experiment.provisioning_status === 'creating' || isProvisioning) && (
+                      <button
+                        disabled
+                        className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-100 text-blue-700 px-3 py-2 rounded-lg cursor-not-allowed"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>儲存庫建立中...</span>
+                      </button>
+                    )}
 
-                {experiment.provisioning_status === 'failed' && !isProvisioning && (
-                  <button
-                    onClick={handleProvision}
-                    disabled={isProvisioning}
-                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-sm disabled:opacity-50"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>重新建立 (Retry)</span>
-                  </button>
+                    {experiment.provisioning_status === 'failed' && !isProvisioning && (
+                      <button
+                        onClick={handleProvision}
+                        disabled={isProvisioning}
+                        className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-sm disabled:opacity-50"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>重新建立 (Retry)</span>
+                      </button>
+                    )}
+                  </>
                 )}
 
                 <button
@@ -634,7 +756,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               className={`inline-flex items-center space-x-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-colors ${
-                experiment.provisioning_status === 'ready'
+                experiment.provisioning_status === 'ready' || isCourseMode
                   ? 'bg-slate-900 hover:bg-slate-800 text-white'
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
               }`}
@@ -645,110 +767,137 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
           </div>
         </div>
 
-        {/* Provisioning 狀態看板 */}
-        {(isProvisioning || experiment.provisioning_status === 'creating') && (
-          <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between text-xs text-blue-900 animate-pulse">
-            <div className="flex items-center space-x-3">
-              <RefreshCw className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
-              <div>
-                <p className="font-bold text-sm text-blue-950">
-                  遠端儲存庫建立中 (Provisioning in progress)
-                </p>
-                <p className="text-blue-700 mt-0.5">
-                  系統正調用 GitHub App 依據官方範本 (<span className="font-mono">Lorin1470/lab-workspace-template</span>) 初始化工作區 <span className="font-mono font-semibold">{resolvedRepo}</span>{isCourseMode ? ` (路徑: experiments/${experiment.experiment_code}/)` : ''}。此程序約需數秒，請稍候...
-                </p>
+        {/* Provisioning 狀態看板 (Course Mode 共用儲存庫；Experiment Mode 獨立儲存庫) */}
+        {isCourseMode ? (
+          course?.github_repository && (
+            <div className="mt-4 p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-900">
+              <div className="flex items-center space-x-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div>
+                  <span className="font-bold">課程儲存庫已就緒：</span>
+                  <span className="text-emerald-800">
+                    工作區共用課程儲存庫 <code className="font-mono font-semibold">{course.github_repository}</code>。
+                  </span>
+                </div>
               </div>
-            </div>
-            <div className="hidden sm:block text-right shrink-0 font-mono text-[11px] text-blue-600">
-              狀態：creating
-            </div>
-          </div>
-        )}
-
-        {experiment.provisioning_status === 'failed' && !isProvisioning && (
-          <div className="mt-4 p-4 bg-rose-50 border border-rose-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-900">
-            <div className="flex items-start space-x-3">
-              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-sm text-rose-950">
-                  遠端儲存庫建立失敗 (Provisioning Failed)
-                </p>
-                <p className="text-rose-800 mt-0.5">
-                  錯誤摘要：<span className="font-mono bg-rose-100 px-1.5 py-0.5 rounded">{experiment.provisioning_error || '建立儲存庫時發生未預期的錯誤，請確認組織權限與名稱'}</span>
-                </p>
-                <p className="text-rose-600 text-[11px] mt-1">
-                  請確認 GitHub App 是否已安裝於目標組織，或檢查儲存庫名稱是否合規。
-                </p>
-              </div>
-            </div>
-            {isCollaborator && (
-              <button
-                onClick={handleProvision}
-                disabled={isProvisioning}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold transition-colors cursor-pointer shrink-0 shadow-xs"
+              <a
+                href={`https://github.com/${course.github_repository}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center space-x-1 text-emerald-700 hover:text-emerald-900 font-semibold underline shrink-0"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>重新建立 (Retry)</span>
-              </button>
-            )}
-          </div>
-        )}
-
-        {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
-          <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
-            <div className="flex items-start space-x-3">
-              <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-sm text-amber-950">
-                  尚未建立遠端儲存庫 (Pending Provisioning)
-                </p>
-                <p className="text-amber-800 mt-0.5">
-                  目標儲存庫：<span className="font-mono font-semibold">{resolvedRepo}</span>{isCourseMode ? ` (路徑: experiments/${experiment.experiment_code}/)` : ''}。
-                  {isCollaborator
-                    ? ' 協作者可直接點擊右側按鈕，系統將自動透過 GitHub App 與官方範本初始化該儲存庫。'
-                    : ' 此實驗專案尚未在 GitHub 上初始化，請待專案協作者完成遠端儲存庫建立。'}
-                </p>
-              </div>
+                <span>查看 GitHub 倉庫</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
             </div>
-            {isCollaborator && (
-              <button
-                onClick={handleProvision}
-                disabled={isProvisioning}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors cursor-pointer shrink-0 shadow-xs"
-              >
-                <FolderGit2 className="w-3.5 h-3.5" />
-                <span>建立 GitHub 儲存庫</span>
-              </button>
+          )
+        ) : (
+          <>
+            {(isProvisioning || experiment.provisioning_status === 'creating') && (
+              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between text-xs text-blue-900 animate-pulse">
+                <div className="flex items-center space-x-3">
+                  <RefreshCw className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
+                  <div>
+                    <p className="font-bold text-sm text-blue-950">
+                      遠端儲存庫建立中 (Provisioning in progress)
+                    </p>
+                    <p className="text-blue-700 mt-0.5">
+                      系統正調用 GitHub App 依據官方範本 (<span className="font-mono">Lorin1470/lab-workspace-template</span>) 初始化工作區 <span className="font-mono font-semibold">{resolvedRepo}</span>。此程序約需數秒，請稍候...
+                    </p>
+                  </div>
+                </div>
+                <div className="hidden sm:block text-right shrink-0 font-mono text-[11px] text-blue-600">
+                  狀態：creating
+                </div>
+              </div>
             )}
-          </div>
-        )}
 
-        {experiment.provisioning_status === 'ready' && !isProvisioning && (
-          <div className="mt-4 p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-900">
-            <div className="flex items-center space-x-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <div>
-                <span className="font-bold">遠端儲存庫已就緒：</span>
-                <span className="text-emerald-800">
-                  工作區儲存庫已完成初始化。
-                  {experiment.provisioned_at && (
-                    <span className="text-emerald-700 ml-1">
-                      （就緒時間：{new Date(experiment.provisioned_at).toLocaleString()}）
+            {experiment.provisioning_status === 'failed' && !isProvisioning && (
+              <div className="mt-4 p-4 bg-rose-50 border border-rose-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-900">
+                <div className="flex items-start space-x-3">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-sm text-rose-950">
+                      遠端儲存庫建立失敗 (Provisioning Failed)
+                    </p>
+                    <p className="text-rose-800 mt-0.5">
+                      錯誤摘要：<span className="font-mono bg-rose-100 px-1.5 py-0.5 rounded">{experiment.provisioning_error || '建立儲存庫時發生未預期的錯誤，請確認組織權限與名稱'}</span>
+                    </p>
+                    <p className="text-rose-600 text-[11px] mt-1">
+                      請確認 GitHub App 是否已安裝於目標組織，或檢查儲存庫名稱是否合規。
+                    </p>
+                  </div>
+                </div>
+                {isCollaborator && (
+                  <button
+                    onClick={handleProvision}
+                    disabled={isProvisioning}
+                    className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold transition-colors cursor-pointer shrink-0 shadow-xs"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>重新建立 (Retry)</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
+              <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
+                <div className="flex items-start space-x-3">
+                  <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-sm text-amber-950">
+                      尚未建立遠端儲存庫 (Pending Provisioning)
+                    </p>
+                    <p className="text-amber-800 mt-0.5">
+                      目標儲存庫：<span className="font-mono font-semibold">{resolvedRepo}</span>。
+                      {isCollaborator
+                        ? ' 協作者可直接點擊右側按鈕，系統將自動透過 GitHub App 與官方範本初始化該儲存庫。'
+                        : ' 此實驗專案尚未在 GitHub 上初始化，請待專案協作者完成遠端儲存庫建立。'}
+                    </p>
+                  </div>
+                </div>
+                {isCollaborator && (
+                  <button
+                    onClick={handleProvision}
+                    disabled={isProvisioning}
+                    className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors cursor-pointer shrink-0 shadow-xs"
+                  >
+                    <FolderGit2 className="w-3.5 h-3.5" />
+                    <span>建立 GitHub 儲存庫</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {experiment.provisioning_status === 'ready' && !isProvisioning && (
+              <div className="mt-4 p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-900">
+                <div className="flex items-center space-x-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div>
+                    <span className="font-bold">遠端儲存庫已就緒：</span>
+                    <span className="text-emerald-800">
+                      工作區儲存庫已完成初始化。
+                      {experiment.provisioned_at && (
+                        <span className="text-emerald-700 ml-1">
+                          （就緒時間：{new Date(experiment.provisioned_at).toLocaleString()}）
+                        </span>
+                      )}
                     </span>
-                  )}
-                </span>
+                  </div>
+                </div>
+                <a
+                  href={`https://github.com/${resolvedRepo}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center space-x-1 text-emerald-700 hover:text-emerald-900 font-semibold underline shrink-0"
+                >
+                  <span>查看 GitHub 倉庫</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
-            </div>
-            <a
-              href={isCourseMode ? `https://github.com/${resolvedRepo}/tree/main/experiments/${experiment.experiment_code}` : `https://github.com/${resolvedRepo}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center space-x-1 text-emerald-700 hover:text-emerald-900 font-semibold underline shrink-0"
-            >
-              <span>查看 GitHub 倉庫{isCourseMode ? ' (實驗目錄)' : ''}</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
+            )}
+          </>
         )}
 
         {/* 分頁導覽列 */}
@@ -1072,46 +1221,107 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         {/* 3. 查看報告 */}
         {activeTab === 'report' && (
           <div className="space-y-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-200">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 gap-2">
               <div className="flex items-center space-x-2 text-sm text-slate-600">
-                <FileText className="w-4 h-4 text-blue-600" />
+                <FileText className="w-4 h-4 text-blue-600 shrink-0" />
                 <span>
-                  報告規範路徑：
-                  <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs font-mono ml-1">
-                    {experiment.report_mode === 'shared' ? 'report/report.md' : 'report/report-<github_id>.md'}
+                  報告檔案：
+                  <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs font-mono ml-1 text-slate-800">
+                    {currentReportPath}
                   </code>
                 </span>
+                {reportSha && (
+                  <span className="text-[10px] font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
+                    SHA: {reportSha.slice(0, 7)}
+                  </span>
+                )}
               </div>
-              <button
-                onClick={() => window.print()}
-                className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>列印 / 匯出 PDF</span>
-              </button>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={loadReport}
+                  disabled={reportLoading}
+                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  title="重新讀取實驗報告"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${reportLoading ? 'animate-spin' : ''}`} />
+                  <span>重新整理</span>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('files')}
+                  className="inline-flex items-center space-x-1.5 text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer font-medium"
+                  title="前往工作區編輯報告"
+                >
+                  <FolderTree className="w-3.5 h-3.5" />
+                  <span>前往工作區編輯</span>
+                </button>
+
+                <button
+                  onClick={() => window.print()}
+                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>列印 / 匯出 PDF</span>
+                </button>
+              </div>
             </div>
 
-            <article className="prose max-w-none text-slate-800 space-y-4">
-              <h1 className="text-2xl font-bold text-slate-900 border-b pb-2">
-                實驗報告：{experiment.name}
-              </h1>
-
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-sm space-y-1">
-                <div><strong>實驗代碼</strong>：{experiment.experiment_code}</div>
-                <div><strong>報告模式</strong>：{experiment.report_mode === 'shared' ? '全組共同撰寫 (shared)' : '不可變 GitHub ID 個別撰寫 (separate)'}</div>
-                <div><strong>所屬 Repository</strong>：{resolvedRepo} {isCourseMode && <span className="text-slate-500 font-mono">(experiments/{experiment.experiment_code}/)</span>}</div>
+            {reportLoading && (
+              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400">
+                <RefreshCw className="w-7 h-7 animate-spin text-blue-500" />
+                <span className="text-sm">正在載入實驗報告 ({currentReportPath})...</span>
               </div>
+            )}
 
-              <h3 className="text-lg font-bold text-slate-900 pt-2">一、實驗目的與規格</h3>
-              <p className="text-sm leading-relaxed">
-                本實驗專案遵循一節課一 Repo 規範，所有原始數據請存放於 <code>raw/</code> 目錄，經清洗運算後之產物置於 <code>processed/</code> 與 <code>analysis/</code>。
-              </p>
-
-              <h3 className="text-lg font-bold text-slate-900 pt-2">二、實驗數據與特性曲線</h3>
-              <div className="bg-blue-50/50 p-3 rounded border border-blue-100 text-center font-mono text-base">
-                $$I_C = \beta \cdot I_B$$
+            {!reportLoading && reportError && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{reportError}</span>
+                </div>
+                <button
+                  onClick={loadReport}
+                  className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-semibold transition-colors cursor-pointer"
+                >
+                  重試
+                </button>
               </div>
-            </article>
+            )}
+
+            {!reportLoading && reportNotFound && (
+              <div className="border border-dashed border-slate-200 rounded-xl py-16 text-center space-y-3">
+                <FileText className="w-10 h-10 mx-auto text-slate-300" />
+                <p className="text-base font-bold text-slate-700">尚未建立實驗報告</p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                  此實驗工作區尚未建立報告檔案（<code className="font-mono text-slate-700">{currentReportPath}</code>）。
+                  您可以直接在瀏覽器工作區中建立並編輯報告，存檔後系統會自動同步至雲端。
+                </p>
+                <div className="pt-2">
+                  <button
+                    onClick={() => setActiveTab('files')}
+                    className="inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+                  >
+                    <FolderTree className="w-3.5 h-3.5" />
+                    <span>前往「📁 工作區」建立報告</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!reportLoading && !reportNotFound && !reportError && reportContent !== null && (
+              <article className="prose max-w-none text-slate-800 space-y-4">
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-sm space-y-1">
+                  <div><strong>實驗名稱</strong>：{experiment.name} ({experiment.experiment_code})</div>
+                  <div><strong>報告模式</strong>：{experiment.report_mode === 'shared' ? '全組共同撰寫 (shared)' : '個別報告模式 (separate)'}</div>
+                  <div><strong>報告檔案</strong>：<code className="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded">{currentReportPath}</code></div>
+                  <div><strong>所屬 Repository</strong>：{resolvedRepo}</div>
+                </div>
+
+                <div className="border-t border-slate-100 pt-4">
+                  <SimpleMarkdownViewer content={reportContent} />
+                </div>
+              </article>
+            )}
           </div>
         )}
 
@@ -1136,7 +1346,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               <div className="space-y-2">
                 <h4 className="font-bold text-slate-900 text-base">工作區資料上傳已全面整合</h4>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  實驗量測數據與實驗照片上傳功能已與 GitHub Workspace 深度整合。您可以在「📁 工作區」中即時瀏覽真實目錄、上傳原始數據至 <code>raw/</code>（受聖域保護，不可竄改）、上傳實驗照片至 <code>photos/</code>（上限 5MB），並即時取得真實 GitHub Git Commit SHA 與活動紀錄更新。
+                  實驗量測數據與實驗照片上傳功能已與 GitHub Workspace 深度整合。您可以在「📁 工作區」中即時瀏覽真實目錄、上傳原始數據至 <code>raw/</code>（受唯讀保護，不可覆寫或竄改）、上傳實驗照片至 <code>photos/</code>（上限 5MB），並即時取得真實 GitHub Git Commit SHA 與活動紀錄更新。
                 </p>
                 <div className="pt-2">
                   <button

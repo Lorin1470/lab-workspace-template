@@ -17,6 +17,9 @@ export const App: React.FC = () => {
 
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedExperiment, setSelectedExperiment] = useState<Experiment | null>(null);
+  const [experimentInitialTab, setExperimentInitialTab] = useState<
+    'activity' | 'members' | 'report' | 'files' | 'upload' | 'download' | 'agent'
+  >('files');
 
   // 全域通知 Toast
   const [toastSuccess, setToastSuccess] = useState<string | null>(null);
@@ -102,12 +105,18 @@ export const App: React.FC = () => {
   };
 
   // 導覽至實驗詳情
-  const handleSelectExperiment = async (exp: Experiment) => {
+  const handleSelectExperiment = async (
+    exp: Experiment,
+    initialTab?: 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download' | 'agent'
+  ) => {
     try {
       const data = await api.experiments.get(exp.id);
       setSelectedExperiment(data.experiment);
       if (data.course) {
         setSelectedCourse(data.course);
+      }
+      if (initialTab) {
+        setExperimentInitialTab(initialTab);
       }
       setView('experiment-detail');
     } catch (err: any) {
@@ -217,6 +226,7 @@ export const App: React.FC = () => {
             course={selectedCourse}
             userRole={selectedCourse?.role}
             user={user}
+            initialTab={experimentInitialTab}
             onBack={() => {
               if (selectedCourse) {
                 setSelectedExperiment(null);
@@ -228,6 +238,7 @@ export const App: React.FC = () => {
                 loadCourses();
               }
             }}
+            onSelectExperiment={handleSelectExperiment}
             onExperimentUpdated={handleExperimentUpdated}
             onError={showError}
             onSuccess={showSuccess}
@@ -237,7 +248,7 @@ export const App: React.FC = () => {
 
       {/* 頁尾 */}
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400">
-        <p>實驗課 GitHub 工作區系統 • 一節課一 Repo 實驗協作體系 • Powered by Cloudflare Pages & D1</p>
+        <p>實驗課 GitHub 工作區系統 • 實驗課雲端工作區協作體系 • Powered by Cloudflare Pages & D1</p>
       </footer>
     </div>
   );

@@ -10,6 +10,9 @@ interface NavbarProps {
   onLogout: () => void;
 }
 
+import { resolveNavbarRepository } from '../utils/workspace-ui.ts';
+export { resolveNavbarRepository };
+
 export const Navbar: React.FC<NavbarProps> = ({
   currentCourse,
   currentExperiment,
@@ -18,6 +21,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   user,
   onLogout,
 }) => {
+  const displayRepo = resolveNavbarRepository(currentExperiment, currentCourse);
+
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -35,7 +40,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 實驗課 GitHub 工作區
               </h1>
               <p className="text-[11px] text-slate-500 font-medium leading-none">
-                一節課一 Repo 實驗協作體系
+                實驗課雲端工作區協作體系
               </p>
             </div>
           </div>
@@ -80,10 +85,10 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* 右側操作與身分資訊 */}
         <div className="flex items-center space-x-3 shrink-0">
-          {currentExperiment && (
+          {displayRepo && (
             <span className="hidden md:inline-flex items-center space-x-1 text-xs font-mono bg-slate-100 px-2.5 py-1 rounded text-slate-600 border border-slate-200">
               <FolderGit2 className="w-3.5 h-3.5 text-slate-400" />
-              <span>{currentExperiment.repository}</span>
+              <span>{displayRepo}</span>
             </span>
           )}
 

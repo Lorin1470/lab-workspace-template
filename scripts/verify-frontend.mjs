@@ -15,7 +15,15 @@
 import http from 'node:http';
 import assert from 'node:assert';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { onRequest } from '../web/functions/api/[[route]].ts';
+import {
+  resolveNavbarRepository,
+  resolveInitialExperimentTab,
+  shouldShowStandaloneProvisioningWarning,
+  getReportRelativePath,
+} from '../web/src/utils/workspace-ui.ts';
 
 const TEST_PORT = 9005;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}/api`;
@@ -1440,6 +1448,182 @@ async function runFrontendIntegrationTests() {
     pass('Activity Log 成功包含 Workspace 最新操作與真實 40 位元 commit_sha');
   } catch (err) {
     fail('群組 9 執行失敗', err);
+  }
+
+  // -------------------------------------------------------------
+  // 群組 10: Course → Lab → Workspace UX 與 Course Mode 前台流程驗證
+  // -------------------------------------------------------------
+  console.log('\n▶ [群組 10: Course → Lab → Workspace UX 與 Course Mode 前台流程驗證]');
+  try {
+    // 10.1 Course Mode Navbar fallback repository (覆蓋條件 1)
+    const courseModeExp = { id: 'exp-course-01', experiment_code: 'lab-01', repository: null };
+    const courseModeCourse = { id: 'c-01', mode: 'course', github_repository: 'example-org/shared-physics-course' };
+    const resolvedCourseRepo = resolveNavbarRepository(courseModeExp, courseModeCourse);
+    assert.strictEqual(resolvedCourseRepo, 'example-org/shared-physics-course');
+    assert(!resolvedCourseRepo.includes('experiments/'));
+    pass('1. Course Mode 下 Navbar repository 正確 fallback 至 course.github_repository 且不含 scoped path');
+
+    // 10.2 Experiment Mode Navbar repository (覆蓋條件 2)
+    const expModeExp = { id: 'exp-legacy-01', experiment_code: 'lab-01', repository: 'example-org/physics-exp-01' };
+    const expModeCourse = { id: 'c-02', mode: 'experiment', github_repository: null };
+    const resolvedExpRepo = resolveNavbarRepository(expModeExp, expModeCourse);
+    assert.strictEqual(resolvedExpRepo, 'example-org/physics-exp-01');
+    pass('2. Experiment Mode 下 Navbar repository 正確使用 experiment.repository');
+
+    // 重新建立已登入之教師 Session（Group 7 曾測試登出流程）
+    const activeTeacherCookie = createTestSession('99999', 'teacherLin', '林老師');
+
+    // 10.3 report.md 存在時 (shared 模式) Report Tab 顯示實際內容 (覆蓋條件 3)
+    await apiRequest(`/experiments/${expId}`, {
+      method: 'PATCH',
+      cookie: activeTeacherCookie,
+      body: { report_mode: 'shared' },
+    });
+    mockGitHub.setFile('example-org/physics-exp-01', 'report/report.md', '# 物理實驗報告：光電效應\n測量結果：普朗克常數符合預期。');
+    const reportReadRes = await apiRequest(`/experiments/${expId}/workspace/file?path=${getReportRelativePath('shared')}`, {
+      cookie: studentCookie,
+    });
+    assert.strictEqual(reportReadRes.status, 200);
+    assert.strictEqual(reportReadRes.data.path, 'report/report.md');
+    assert(reportReadRes.data.content.includes('# 物理實驗報告：光電效應'));
+    assert(!reportReadRes.data.content.includes('$$I_C = \\beta \\cdot I_B$$'));
+    pass('3. Shared 模式下 report.md 存在時 Report API 正確回傳實際報告內容而非假資料電晶體公式');
+
+    // 10.4 report.md 不存在時友善 empty state 支援 (覆蓋條件 4)
+    const expNoReport = await apiRequest('/experiments', {
+      method: 'POST',
+      cookie: activeTeacherCookie,
+      body: {
+        course_id: courseId,
+        experiment_code: 'exp-noreport',
+        name: '無報告測試實驗',
+        repository: 'example-org/physics-exp-noreport',
+      },
+    });
+    assert.strictEqual(expNoReport.status, 201);
+    const noReportExpId = expNoReport.data.experiment.id;
+
+    const noReportRes = await apiRequest(`/experiments/${noReportExpId}/workspace/file?path=${getReportRelativePath('shared')}`, {
+      cookie: activeTeacherCookie,
+    });
+    assert.strictEqual(noReportRes.status, 404);
+    pass('4. report.md 不存在時回傳 404，由前端平順展現「尚未建立實驗報告」友善空狀態');
+
+    // 10.5 Course Mode report 正確使用 scoped Workspace API (覆蓋條件 5)
+    // 建立 Course Mode 課程與實驗
+    const courseModeCreate = await apiRequest('/courses', {
+      method: 'POST',
+      cookie: activeTeacherCookie,
+      body: {
+        course_code: 'CS101',
+        name: '計算機科學實驗',
+        semester: '114-1',
+        mode: 'course',
+        github_repository: 'example-org/shared-physics-course',
+      },
+    });
+    assert.strictEqual(courseModeCreate.status, 201);
+    const csCourseId = courseModeCreate.data.course.id;
+
+    const csExpCreate = await apiRequest('/experiments', {
+      method: 'POST',
+      cookie: activeTeacherCookie,
+      body: {
+        course_id: csCourseId,
+        experiment_code: 'lab-01',
+        name: '資料結構實驗一',
+        report_mode: 'shared',
+      },
+    });
+    assert.strictEqual(csExpCreate.status, 201);
+    const csExpId = csExpCreate.data.experiment.id;
+
+    // 在 Mock GitHub 中將檔案置於 Course Mode scoped 路徑: experiments/lab-01/report/report.md
+    mockGitHub.setFile('example-org/shared-physics-course', 'experiments/lab-01/report/report.md', '# CS101 Lab 01 報告\n二元樹實作分析');
+
+    // 前端請求乾淨相對路徑 report/report.md，後端 scoped resolver 正確解析
+    const csReportRes = await apiRequest(`/experiments/${csExpId}/workspace/file?path=report/report.md`, {
+      cookie: activeTeacherCookie,
+    });
+    assert.strictEqual(csReportRes.status, 200);
+    assert.strictEqual(csReportRes.data.path, 'report/report.md');
+    assert(csReportRes.data.content.includes('# CS101 Lab 01 報告'));
+    pass('5. Course Mode 下 Report 正確透過 scoped Workspace API 存取，前端毋須自拼路徑');
+
+    // 10.6 「開啟實驗工作區」會進入 Workspace Tab (覆蓋條件 6)
+    const defaultTab = resolveInitialExperimentTab();
+    assert.strictEqual(defaultTab, 'files');
+    const customWorkspaceTab = resolveInitialExperimentTab('files');
+    assert.strictEqual(customWorkspaceTab, 'files');
+    pass('6. 「開啟實驗工作區」導覽目標正確對應至 Workspace Tab (files) 而非 activity');
+
+    // 10.7 Course Mode 不顯示獨立 repository provisioning warning (覆蓋條件 7)
+    const shouldShowInCourseMode = shouldShowStandaloneProvisioningWarning('course', 'example-org/shared-physics-course', 'pending');
+    assert.strictEqual(shouldShowInCourseMode, false);
+    const shouldShowInExpMode = shouldShowStandaloneProvisioningWarning('experiment', null, 'pending');
+    assert.strictEqual(shouldShowInExpMode, true);
+    pass('7. Course Mode 成功抑制獨立 Repository 建立警告 (Pending Provisioning)');
+
+    // 10.8 Course Mode UI 不顯示 experiments/<code>/ implementation path (覆蓋條件 8)
+    const webComponentsDir = path.resolve('web/src/components');
+    const componentFiles = ['CourseDetail.tsx', 'CourseList.tsx', 'ExperimentDetail.tsx', 'Navbar.tsx', 'WorkspaceManager.tsx'];
+    for (const compFile of componentFiles) {
+      const fullPath = path.join(webComponentsDir, compFile);
+      const content = fs.readFileSync(fullPath, 'utf8');
+      assert(!content.includes('(experiments/${'), `${compFile} 不應外洩括號 scoped path`);
+      assert(!content.includes('路徑：experiments/'), `${compFile} 不應外洩「路徑：experiments/」標籤`);
+      assert(!content.includes('experiments/<code\\>/ 目錄隔離'), `${compFile} 不應外洩 experiments/<code\\>/ 目錄隔離技術字樣`);
+    }
+    pass('8. 前端核心元件靜態審查通過，絕無向一般使用者視覺區域外洩 experiments/<code>/ 實作路徑');
+
+    // 10.9 getReportRelativePath 路徑解析決策驗證
+    assert.strictEqual(getReportRelativePath('shared', '20001'), 'report/report.md');
+    assert.strictEqual(getReportRelativePath('shared'), 'report/report.md');
+    assert.strictEqual(getReportRelativePath('separate', '20001'), 'report/report-20001.md');
+    assert.strictEqual(getReportRelativePath('separate', null), 'report/report.md');
+    pass('9. getReportRelativePath 依 shared/separate 模式與登入者 GitHub ID 正確動態解析報告路徑');
+
+    // 10.10 Separate Report 模式：學生成功讀取自身個人報告 (200 OK)
+    await apiRequest(`/experiments/${expId}`, {
+      method: 'PATCH',
+      cookie: activeTeacherCookie,
+      body: { report_mode: 'separate' },
+    });
+    mockGitHub.setFile('example-org/physics-exp-01', 'report/report-20001.md', '# 陳同學個人報告\n實測數據符合理論預期。');
+    const chenReportRes = await apiRequest(`/experiments/${expId}/workspace/file?path=${getReportRelativePath('separate', '20001')}`, {
+      cookie: studentCookie,
+    });
+    assert.strictEqual(chenReportRes.status, 200);
+    assert.strictEqual(chenReportRes.data.path, 'report/report-20001.md');
+    assert(chenReportRes.data.content.includes('# 陳同學個人報告'));
+    pass('10. Separate Report 模式下，學生透過自身 Session 成功讀取個人報告 (200 OK)');
+
+    // 10.11 Separate Report 模式：學生嘗試讀取其他成員報告遭 403 阻絕
+    mockGitHub.setFile('example-org/physics-exp-01', 'report/report-30001.md', '# 其他同學報告');
+    const tamperReadRes = await apiRequest(`/experiments/${expId}/workspace/file?path=report/report-30001.md`, {
+      cookie: studentCookie,
+    });
+    assert.strictEqual(tamperReadRes.status, 403);
+    assert(tamperReadRes.data.error.includes('Separate report mode violation'));
+    pass('11. Separate Report 模式下，學生企圖讀取他人個人報告遭 403 Forbidden 阻絕');
+
+    // 10.12 Separate Report 模式：教師成功讀取學生報告以利批改 (200 OK)
+    const teacherReadRes = await apiRequest(`/experiments/${expId}/workspace/file?path=report/report-20001.md`, {
+      cookie: activeTeacherCookie,
+    });
+    assert.strictEqual(teacherReadRes.status, 200);
+    assert(teacherReadRes.data.content.includes('# 陳同學個人報告'));
+    pass('12. Separate Report 模式下，教師身分成功讀取學生個人報告以利檢閱評分 (200 OK)');
+
+    // 10.13 Report Empty State 文案審查：完全移除「本地 Git」技術術語，以瀏覽器工作區為中心
+    const expDetailContent = fs.readFileSync(path.join(webComponentsDir, 'ExperimentDetail.tsx'), 'utf8');
+    assert(!expDetailContent.includes('本地 Git'), 'Empty State 不應提及「本地 Git」');
+    assert(!expDetailContent.includes('提交至儲存庫'), 'Empty State 不應提及「提交至儲存庫」');
+    assert(expDetailContent.includes('瀏覽器工作區'), 'Empty State 應強調以瀏覽器工作區直接撰寫');
+    assert(expDetailContent.includes('前往「📁 工作區」建立報告'), 'Empty State 必須保留前往工作區 CTA');
+    pass('13. 報告 Empty State 文案審查通過：徹底去技術黑話，改為瀏覽器工作區直覺引導');
+  } catch (err) {
+    fail('群組 10 執行失敗', err);
   }
 
   // 測試總結

@@ -439,7 +439,7 @@ export const CourseList: React.FC<CourseListProps> = ({
                     required
                   />
                   <p className="text-[11px] text-slate-400 mt-1">
-                    課程模式專用 GitHub 儲存庫。全體實驗將共用此儲存庫並在 <code className="font-mono text-slate-600">experiments/&lt;code&gt;/</code> 下運作。
+                    課程模式專用 GitHub 儲存庫。全體實驗將共用此儲存庫，系統會為每個實驗建立專屬工作空間。
                   </p>
                 </div>
               )}
