@@ -2556,7 +2556,8 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ error: 'Missing required query parameter: path' }), { status: 400, headers });
         }
         try {
-          const fileData = await readFile(env, expId, filePath, sessionUser, env.FETCH || fetch);
+          const userWithRole = sessionUser ? { ...sessionUser, role: perm.role } : sessionUser;
+          const fileData = await readFile(env, expId, filePath, userWithRole, env.FETCH || fetch);
           return new Response(JSON.stringify(fileData), { status: 200, headers });
         } catch (err: any) {
           const status = err instanceof WorkspaceError ? err.status : (err.status || 500);

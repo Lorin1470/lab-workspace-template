@@ -62,7 +62,7 @@ export function formatWorkspaceError(err: any, context?: 'raw' | 'photo' | 'save
   }
   if (status === 403) {
     if (msg.includes('Raw sanctuary violation')) {
-      return '原始數據受到聖域保護，嚴禁任何覆蓋或直接修改。請使用專屬 Raw 上傳功能。';
+      return '此資料夾為原始實驗數據，為避免意外修改，檔案無法直接編輯。如需新增資料，請使用「上傳原始數據」。';
     }
     if (msg.includes('Separate report isolation violation')) {
       return '此實驗採個人報告模式，你只能編輯自己的個人報告。';
@@ -126,7 +126,7 @@ function isMarkdownPath(path: string): boolean {
 }
 
 // 極簡純前端 Markdown 預覽元件（不依賴大型套件）
-const SimpleMarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
+export const SimpleMarkdownViewer: React.FC<{ content: string }> = ({ content }) => {
   const renderedLines = useMemo(() => {
     const lines = content.split('\n');
     const elements: React.ReactNode[] = [];
@@ -368,11 +368,11 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
     if (!isCollaborator) {
       return { allowed: false, reason: '你不是這個實驗 Workspace 的協作者，僅供唯讀檢視。' };
     }
-    // Raw Data 聖域保護
+    // Raw Data 唯讀保護
     if (currentFile.path.startsWith('raw/')) {
       return {
         allowed: false,
-        reason: '原始資料受到 Raw Data 聖域保護，嚴禁直接修改。若要新增量測數據請使用「上傳原始資料」。',
+        reason: '此資料夾為原始實驗數據，為避免意外修改，檔案無法直接編輯。如需新增資料，請使用「上傳原始數據」。',
       };
     }
     // Separate Report 模式防護
@@ -616,7 +616,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
             {isRawDir && isDir && (
               <span className="inline-flex items-center space-x-0.5 px-1 py-0.2 rounded text-[10px] bg-amber-50 text-amber-700 border border-amber-200">
                 <Lock className="w-2.5 h-2.5" />
-                <span>聖域</span>
+                <span>唯讀</span>
               </span>
             )}
           </div>
@@ -668,7 +668,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
               </span>
               {isCourseMode && (
                 <span className="text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-mono border border-blue-200">
-                  experiments/{experiment.experiment_code}/
+                  工作區：{experiment.experiment_code}
                 </span>
               )}
             </div>
@@ -1053,9 +1053,9 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
               <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-xs text-amber-900 flex items-start space-x-2">
                 <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-bold">Raw Data 聖域保護原則</p>
+                  <p className="font-bold">原始數據保護原則</p>
                   <p className="mt-0.5">
-                    原始量測數據將自動存放於 <code>raw/</code>。一旦上傳完成，嚴禁任何覆寫或刪除。
+                    原始量測數據將自動存放於 <code>raw/</code>。此資料夾為原始實驗數據，為避免意外修改，檔案無法直接編輯。如需新增資料，請使用「上傳原始數據」。
                   </p>
                 </div>
               </div>

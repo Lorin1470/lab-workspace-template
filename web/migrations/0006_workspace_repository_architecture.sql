@@ -12,9 +12,6 @@ ALTER TABLE courses ADD COLUMN github_repository TEXT; -- 例如 "your-org/elect
 
 -- 3. 實驗儲存庫欄位調整：在 course 模式下為 NULL，在 experiment 模式下保持原值
 -- 由於 SQLite 不支援直接修改 NOT NULL 約束，我們需要重建表格
--- 步驟：建立新表 -> 複製資料 -> 替換舊表
-BEGIN TRANSACTION;
-
 -- 建立新的 experiments 表格（repository 欄位允許 NULL）
 CREATE TABLE IF NOT EXISTS experiments_new (
     id TEXT PRIMARY KEY,
@@ -52,7 +49,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_experiments_repo_unique ON experiments(rep
 CREATE INDEX IF NOT EXISTS idx_experiments_repo ON experiments(repository);
 CREATE INDEX IF NOT EXISTS idx_experiments_course ON experiments(course_id);
 
-COMMIT;
 
 -- 4. 為了向後相容性，實驗 provisioning 表格保持不變（仍記錄實際 provision 的 repository）
 -- 無需變更 experiment_provisionings
