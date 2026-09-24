@@ -600,7 +600,11 @@ async function runTests() {
     // 測試 18: 在 test-b-lab-02 目錄下執行母倉庫 log-activity.mjs (不提供 --repo)
     // ----------------------------------------------------
     console.log('\n▶ [測試 18] 在 test-b-lab-02 目錄下執行 CLI 自動推導 repo');
-    const testBDir = '/Users/kuanggou/Documents/code/test-b-lab-02';
+    const testBDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-b-lab-02-'));
+    execSync('git init', { cwd: testBDir, stdio: 'ignore' });
+    execSync('git remote add origin https://github.com/Lorin1470/test-b-lab-02.git', { cwd: testBDir, stdio: 'ignore' });
+    fs.writeFileSync(path.join(testBDir, 'config.yml'), 'experiment_id: lab-02\n');
+
     const { stdout: cliTestBOut } = await execFileAsync(
       'node',
       [
