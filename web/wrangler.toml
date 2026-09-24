@@ -4,10 +4,14 @@ compatibility_date = "2024-09-01"
 
 # 集中式 D1 資料庫綁定 (Activity Log 儲存)
 # 部署至正式環境前，請先執行 npx wrangler d1 create experiment-workspace-db 填入 id
+# 獨立部署說明：
+# 在 Cloudflare Pages 專案建立自己的 D1 資料庫：
+# npx wrangler d1 create experiment-workspace-db
+# 並將產生的 database_id 填入下方（或於 Cloudflare Dashboard Pages Settings 綁定 D1 DB）
 [[d1_databases]]
 binding = "DB"
 database_name = "experiment-workspace-db"
-database_id = "8bb326e9-5a8b-4754-a10a-d7707cebacd5"
+database_id = "YOUR_D1_DATABASE_ID"
 
 [vars]
 ENVIRONMENT = "production"
