@@ -8,15 +8,15 @@
     "create-lab": "node scripts/create-lab.mjs",
     "sync-skill": "node scripts/sync-skill.mjs",
     "validate": "node scripts/validate-repo.mjs",
-    "test:activity": "node scripts/verify-activity-log.mjs",
-    "test:auth": "node scripts/verify-auth-session.mjs",
-    "test:permissions": "node scripts/verify-permissions.mjs",
-    "test:management": "node scripts/verify-management.mjs",
+    "test:activity": "tsx scripts/verify-activity-log.mjs",
+    "test:auth": "tsx scripts/verify-auth-session.mjs",
+    "test:permissions": "tsx scripts/verify-permissions.mjs",
+    "test:management": "tsx scripts/verify-management.mjs",
     "test:frontend": "node scripts/verify-frontend.mjs",
-    "test:provisioning": "node scripts/verify-provisioning.mjs",
-    "test:workspace": "node scripts/verify-workspace.mjs",
-    "test:workspace-api": "node scripts/verify-workspace-api.mjs",
-    "test:course-mode": "node scripts/verify-course-mode.mjs",
+    "test:provisioning": "tsx scripts/verify-provisioning.mjs",
+    "test:workspace": "tsx scripts/verify-workspace.mjs",
+    "test:workspace-api": "tsx scripts/verify-workspace-api.mjs",
+    "test:course-mode": "tsx scripts/verify-course-mode.mjs",
     "test:prod": "node scripts/smoke-test-prod.mjs",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build"
@@ -29,5 +29,8 @@
     "lab-management"
   ],
   "author": "Lab Workspace System",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
 }

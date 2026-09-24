@@ -2,7 +2,7 @@
 
 /**
  * validate-repo.mjs
- * 驗證實驗 Repository 是否符合標準規範 (結構、config.yml、SKILL.md)
+ * 驗證實驗 Repository 是否符合標準規範 (結構、config.yml 完整度與版本、SKILL.md 規格)
  */
 
 import fs from 'node:fs';
@@ -51,7 +51,7 @@ for (const file of requiredFiles) {
   }
 }
 
-// 3. 檢查 config.yml 核心欄位
+// 3. 檢查 config.yml 核心欄位與版本設定
 const configPath = path.join(targetDir, 'config.yml');
 if (fs.existsSync(configPath)) {
   const content = fs.readFileSync(configPath, 'utf8');
@@ -61,6 +61,7 @@ if (fs.existsSync(configPath)) {
     'experiment_id',
     'experiment_name',
     'template_version',
+    'skill_version',
     'report_mode',
     'status',
     'members'
@@ -72,8 +73,29 @@ if (fs.existsSync(configPath)) {
       hasError = true;
     }
   }
+
+  // 檢查特定欄位值之合法性
+  const reportModeMatch = content.match(/^\s*report_mode\s*:\s*"?([a-zA-Z0-9_-]+)"?/m);
+  if (reportModeMatch) {
+    const mode = reportModeMatch[1];
+    if (mode !== 'shared' && mode !== 'separate') {
+      console.error(`❌ config.yml 中的 report_mode 必須為 shared 或 separate，目前為: ${mode}`);
+      hasError = true;
+    }
+  }
+
+  const statusMatch = content.match(/^\s*status\s*:\s*"?([a-zA-Z0-9_-]+)"?/m);
+  if (statusMatch) {
+    const status = statusMatch[1];
+    const validStatuses = ['not_started', 'in_progress', 'data_processing', 'report_writing', 'completed'];
+    if (!validStatuses.includes(status)) {
+      console.error(`❌ config.yml 中的 status 值無效: ${status}`);
+      hasError = true;
+    }
+  }
+
   if (!hasError) {
-    console.log('✅ config.yml 欄位完整度合格');
+    console.log('✅ config.yml 欄位完整度與版本設定合格');
   }
 }
 

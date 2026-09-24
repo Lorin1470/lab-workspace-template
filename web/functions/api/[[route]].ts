@@ -404,10 +404,28 @@ export const onRequest = async (context: any) => {
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api\/?/, '');
 
-  const origin = request.headers.get('Origin') || '*';
+  const reqOrigin = request.headers.get('Origin');
+  let allowOrigin = url.origin;
+  if (reqOrigin) {
+    try {
+      const parsedReq = new URL(reqOrigin);
+      if (parsedReq.origin === url.origin) {
+        allowOrigin = reqOrigin;
+      } else if (
+        parsedReq.hostname === 'localhost' ||
+        parsedReq.hostname === '127.0.0.1' ||
+        parsedReq.hostname.endsWith('.pages.dev')
+      ) {
+        allowOrigin = reqOrigin;
+      }
+    } catch {
+      allowOrigin = url.origin;
+    }
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Origin': allowOrigin,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
