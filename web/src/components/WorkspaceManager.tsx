@@ -70,6 +70,9 @@ export function formatWorkspaceError(err: any, context?: 'raw' | 'photo' | 'save
     return '你不是這個實驗 Workspace 的協作者。';
   }
   if (status === 404) {
+    if (msg.includes('Repository') && (msg.includes('not found') || msg.includes('no access'))) {
+      return 'GitHub 儲存庫不存在或尚未建立，請確認儲存庫名稱或至「實驗設定」中執行「建立儲存庫」。';
+    }
     return '找不到這個檔案或實驗 Workspace。';
   }
   if (status === 409) {

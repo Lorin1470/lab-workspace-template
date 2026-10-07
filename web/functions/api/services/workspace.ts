@@ -511,6 +511,39 @@ export async function listFiles(
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({ message: res.statusText }));
     if (res.status === 404) {
+      if (normPath === '') {
+        // 檢查儲存庫本身是否存在，以區分「儲存庫不存在」與「scoped 目錄尚未有任何檔案」
+        const repoUrl = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}`;
+        const repoRes = await safeFetch(fetchFn, repoUrl, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'Lab-Workspace-System/1.0',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+        });
+
+        if (repoRes.ok) {
+          // 儲存庫存在！該實驗專案的 scoped path（如 experiments/lab-01/）尚未建立任何檔案
+          // 此為全新的空工作區，應回傳空清單 []，而非拋出 404
+          return [];
+        }
+
+        if (repoRes.status === 404) {
+          throw new WorkspaceError(
+            404,
+            `Repository '${repoInfo.owner}/${repoInfo.repo}' not found on GitHub or GitHub App has no access`
+          );
+        }
+        if (repoRes.status === 401 || repoRes.status === 403) {
+          throw new WorkspaceError(
+            502,
+            `GitHub App authentication or permission error accessing repository '${repoInfo.owner}/${repoInfo.repo}'`
+          );
+        }
+      }
+
       throw new WorkspaceError(404, `Directory or file '${normPath || '/'}' not found in repository`);
     }
     if (res.status === 401 || res.status === 403) {

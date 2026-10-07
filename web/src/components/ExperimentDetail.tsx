@@ -699,53 +699,49 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
           <div className="flex items-center space-x-2 self-end md:self-auto flex-wrap">
             {isCollaborator && (
               <>
-                {!isCourseMode && (
-                  <>
-                    <button
-                      onClick={() => {
-                        loadProvisionHistory();
-                        setIsHistoryOpen(true);
-                      }}
-                      className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
-                      title="檢視 GitHub 儲存庫建立紀錄"
-                    >
-                      <History className="w-3.5 h-3.5" />
-                      <span>建立歷程</span>
-                    </button>
+                <button
+                  onClick={() => {
+                    loadProvisionHistory();
+                    setIsHistoryOpen(true);
+                  }}
+                  className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                  title="檢視 GitHub 儲存庫建立紀錄"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>建立歷程</span>
+                </button>
 
-                    {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
-                      <button
-                        onClick={handleProvision}
-                        disabled={isProvisioning}
-                        className="inline-flex items-center space-x-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-xs"
-                        title="初始化遠端 GitHub 儲存庫"
-                      >
-                        <FolderGit2 className="w-3.5 h-3.5" />
-                        <span>建立儲存庫</span>
-                      </button>
-                    )}
+                {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
+                  <button
+                    onClick={handleProvision}
+                    disabled={isProvisioning}
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-xs"
+                    title="初始化遠端 GitHub 儲存庫"
+                  >
+                    <FolderGit2 className="w-3.5 h-3.5" />
+                    <span>建立儲存庫</span>
+                  </button>
+                )}
 
-                    {(experiment.provisioning_status === 'creating' || isProvisioning) && (
-                      <button
-                        disabled
-                        className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-100 text-blue-700 px-3 py-2 rounded-lg cursor-not-allowed"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>儲存庫建立中...</span>
-                      </button>
-                    )}
+                {(experiment.provisioning_status === 'creating' || isProvisioning) && (
+                  <button
+                    disabled
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-100 text-blue-700 px-3 py-2 rounded-lg cursor-not-allowed"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>儲存庫建立中...</span>
+                  </button>
+                )}
 
-                    {experiment.provisioning_status === 'failed' && !isProvisioning && (
-                      <button
-                        onClick={handleProvision}
-                        disabled={isProvisioning}
-                        className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-sm disabled:opacity-50"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span>重新建立 (Retry)</span>
-                      </button>
-                    )}
-                  </>
+                {experiment.provisioning_status === 'failed' && !isProvisioning && (
+                  <button
+                    onClick={handleProvision}
+                    disabled={isProvisioning}
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-sm disabled:opacity-50"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>重新建立 (Retry)</span>
+                  </button>
                 )}
 
                 <button
@@ -778,7 +774,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         </div>
 
         {/* Provisioning 狀態看板 (Course Mode 共用儲存庫；Experiment Mode 獨立儲存庫) */}
-        {isCourseMode ? (
+        {isCourseMode && experiment.provisioning_status === 'ready' ? (
           course?.github_repository && (
             <div className="mt-4 p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-900">
               <div className="flex items-center space-x-2.5">

@@ -281,9 +281,6 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
   };
 
   const renderProvBadge = (status?: string) => {
-    if (course.mode === 'course') {
-      return null;
-    }
     switch (status) {
       case 'ready':
         return (

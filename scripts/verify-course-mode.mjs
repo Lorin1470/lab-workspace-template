@@ -1231,6 +1231,91 @@ async function runCourseModeVerification() {
     assert.strictEqual(legProvRes.status, 200);
     pass("34. 舊版 Experiment Mode 實驗專案維持獨立儲存庫 Provisioning 運作");
 
+    // -------------------------------------------------------------
+    // [群組 10: 空 Scoped Path 容錯與 GitHub 倉庫異常診斷]
+    // -------------------------------------------------------------
+    console.log("\n▶ [群組 10: 空 Scoped Path 容錯與 GitHub 倉庫異常診斷]");
+
+    // 10.1: 新建立的實驗尚未在 GitHub 有任何 experiments/<code> 檔案時，
+    // GET /experiments/:id/workspace/files 應安全回傳 items: []，而非報 404
+    const expEmptyRes = await fetch(`${BASE_URL}/experiments`, {
+      method: "POST",
+      headers: { ...authHeader(aliceToken), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        course_id: courseId,
+        experiment_code: "lab-brand-new",
+        name: "全新未上傳任何檔案之實驗",
+      }),
+    });
+    assert.strictEqual(expEmptyRes.status, 201);
+    const expEmptyData = await expEmptyRes.json();
+    const expEmptyId = expEmptyData.experiment.id;
+
+    // 此時 mockGh 中完全沒有 "testlaborg/ee301-course-repo:experiments/lab-brand-new/..."
+    // 但 "testlaborg/ee301-course-repo" 倉庫本身存在。
+    const emptyListRes = await fetch(`${BASE_URL}/experiments/${expEmptyId}/workspace/files`, {
+      headers: authHeader(aliceToken),
+    });
+    assert.strictEqual(emptyListRes.status, 200, `Expected 200 for empty scoped path, got ${emptyListRes.status}`);
+    const emptyListData = await emptyListRes.json();
+    assert(Array.isArray(emptyListData.items), "items should be an array");
+    assert.strictEqual(emptyListData.items.length, 0, "Brand new scoped experiment should return empty items []");
+    pass("35. 全新 scoped experiment 於 GitHub 尚未建立目錄時 listFiles 安全回傳空列表 []");
+
+    // 10.2: 若課程綁定之 GitHub 倉庫在 GitHub 上根本不存在 (404)
+    // listFiles 應拋出明確包含「Repository '...' not found」的 404 錯誤，而非籠統目錄 404
+    const cGhostRes = await fetch(`${BASE_URL}/courses`, {
+      method: "POST",
+      headers: { ...authHeader(aliceToken), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        course_code: "GHOST101",
+        name: "幽靈倉庫課程",
+        semester: "114-1",
+        mode: "course",
+        github_repository: "TestLabOrg/ghost-non-existent-repo",
+      }),
+    });
+    assert.strictEqual(cGhostRes.status, 201);
+    const cGhostData = await cGhostRes.json();
+
+    const expGhostRes = await fetch(`${BASE_URL}/experiments`, {
+      method: "POST",
+      headers: { ...authHeader(aliceToken), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        course_id: cGhostData.course.id,
+        experiment_code: "lab-ghost",
+        name: "幽靈實驗",
+      }),
+    });
+    assert.strictEqual(expGhostRes.status, 201);
+    const expGhostData = await expGhostRes.json();
+
+    const ghostListRes = await fetch(`${BASE_URL}/experiments/${expGhostData.experiment.id}/workspace/files`, {
+      headers: authHeader(aliceToken),
+    });
+    assert.strictEqual(ghostListRes.status, 404);
+    const ghostListJson = await ghostListRes.json();
+    assert(
+      ghostListJson.error && ghostListJson.error.includes("TestLabOrg/ghost-non-existent-repo"),
+      `Expected error to mention repo name, got: ${ghostListJson.error}`
+    );
+    pass("36. 綁定不存在之 GitHub 儲存庫時 listFiles 回傳明確的 Repository not found 錯誤");
+
+    // 10.3: 課程建立時拒絕含有空白之 repo 名稱
+    const cSpaceRepoRes = await fetch(`${BASE_URL}/courses`, {
+      method: "POST",
+      headers: { ...authHeader(aliceToken), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        course_code: "SPACE101",
+        name: "含空白之倉庫名稱測試",
+        semester: "114-1",
+        mode: "course",
+        github_repository: "TestLabOrg/Digital Design Practice",
+      }),
+    });
+    assert.strictEqual(cSpaceRepoRes.status, 400);
+    pass("37. 建立課程時若 github_repository 含有空格遭 400 阻絕");
+
     console.log("\n====================================================");
     console.log(`📊 Course Mode 驗證總結：通過 ${passedCount} 項，失敗 0 項`);
     console.log("====================================================\n");
