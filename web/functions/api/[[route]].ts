@@ -405,7 +405,7 @@ export const onRequest = async (context: any) => {
   const url = new URL(request.url);
   const path = url.pathname.replace(/^\/api\/?/, '');
 
-  const origin = request.headers.get('Origin') || '*';
+  const origin = request.headers.get('Origin') || url.origin;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': origin,

@@ -1301,6 +1301,89 @@ async function runAllTests() {
       pass("27d. SVG raw 讀取確認回傳 application/octet-stream 與 nosniff，成功阻絕 inline SVG XSS 風險");
     }
 
+    // 27e-1. multipart 空檔案或缺失檔案遭 400 阻絕
+    {
+      const fd = new FormData();
+      fd.append("message", "no file attached");
+      const res = await api("/experiments/exp-01/workspace/photos", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: fd,
+      });
+      assert.strictEqual(res.status, 400);
+      assert.ok(res.data.error.includes("file"));
+      pass("27e-1. multipart 空檔案或缺失檔案遭 400 阻絕");
+    }
+
+    // 27e-2. multipart 超大圖片 (>5MB) 遭 413 阻絕
+    {
+      const fd = new FormData();
+      const hugeBuffer = Buffer.alloc(5.5 * 1024 * 1024, 0x41);
+      const hugeBlob = new Blob([hugeBuffer], { type: "image/jpeg" });
+      fd.append("file", hugeBlob, "huge_multipart.jpg");
+      fd.append("message", "photo: huge multipart jpeg");
+
+      const res = await api("/experiments/exp-01/workspace/photos", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: fd,
+      });
+      assert.strictEqual(res.status, 413);
+      assert.ok(res.data.error.includes("5MB limit"));
+      pass("27e-2. multipart 超大圖片 (>5MB) 遭 413 Payload Too Large 阻絕");
+    }
+
+    // 27e-3. multipart PNG 上傳並驗證 byte-for-byte 完全吻合
+    {
+      const pngSequence = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+        0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41,
+        0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+        0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+        0x42, 0x60, 0x82,
+      ]);
+
+      const fd = new FormData();
+      const pngBlob = new Blob([pngSequence], { type: "image/png" });
+      fd.append("file", pngBlob, "verified_dot.png");
+      fd.append("message", "photo: verified png");
+
+      const uploadRes = await api("/experiments/exp-01/workspace/photos", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: fd,
+      });
+      assert.strictEqual(uploadRes.status, 201);
+      assert.strictEqual(uploadRes.data.path, "photos/verified_dot.png");
+
+      const rawRes = await api("/experiments/exp-01/workspace/file?path=photos/verified_dot.png&raw=true", {
+        headers: { Cookie: aliceCookie },
+        binary: true,
+      });
+      assert.strictEqual(rawRes.status, 200);
+      assert.strictEqual(rawRes.headers.get("content-type"), "image/png");
+      assert.ok(rawRes.binary.equals(pngSequence), "PNG 二進位內容必須 byte-for-byte 完全吻合");
+      pass("27e-3. multipart PNG 上傳成功且讀回二進位內容 byte-for-byte 完全吻合");
+    }
+
+    // 27e-4. CORS header 健全性：缺少 Origin header 時回傳正確的 Request URL origin，杜絕非法的 '*' 與 credentials: true 衝突
+    {
+      const res = await api("/experiments/exp-01/workspace/files", {
+        headers: { Cookie: aliceCookie },
+      });
+      assert.strictEqual(res.status, 200);
+      const allowOrigin = res.headers.get("access-control-allow-origin");
+      const allowCreds = res.headers.get("access-control-allow-credentials");
+      assert.strictEqual(allowCreds, "true");
+      assert.notStrictEqual(allowOrigin, "*", "當 credentials 為 true 時 Access-Control-Allow-Origin 嚴禁為 *");
+      assert.ok(allowOrigin.startsWith("http://127.0.0.1"), `Access-Control-Allow-Origin 必須為具體合法 Origin (got ${allowOrigin})`);
+      pass("27e-4. CORS header 健全性驗證：嚴禁 Access-Control-Allow-Origin: * 與 credentials 衝突");
+    }
+
     // ----------------------------------------------------
     // 群組 7: Activity Log 真實 Commit SHA 審計 (測試 28-31)
     // ----------------------------------------------------

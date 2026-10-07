@@ -87,11 +87,14 @@ export function formatWorkspaceError(err: any, context?: 'raw' | 'photo' | 'save
     }
     return '檔案太大。';
   }
+  if (status === 0 || msg.toLowerCase().includes('failed to fetch')) {
+    return '網路連線失敗或請求被瀏覽器中斷，請確認網路連線或稍後再試。';
+  }
   if (status === 502) {
     return 'GitHub 服務暫時無回應，請稍後再試。';
   }
   if (status >= 500) {
-    return 'Workspace 暫時無法使用，請稍後再試。';
+    return msg && !msg.startsWith('HTTP ') ? msg : 'Workspace 暫時無法使用，請稍後再試。';
   }
 
   return msg || 'Workspace 暫時無法使用，請稍後再試。';
@@ -584,9 +587,13 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
       setPhotoPreviewUrl(null);
       setPhotoMessage('');
 
-      // 重新整理檔案樹並自動展開與載入新檔案
-      await handleRefreshWorkspace(res.path);
-      await loadFile(res.path);
+      // 重新整理檔案樹並自動展開與載入新檔案 (隔離次要刷新錯誤)
+      try {
+        await handleRefreshWorkspace(res.path);
+        await loadFile(res.path);
+      } catch {
+        // 次要刷新錯誤不影響已成功的照片上傳
+      }
     } catch (err: any) {
       const status = err?.status || (err instanceof ApiError ? err.status : 0);
       if (status === 413) {

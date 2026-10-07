@@ -32,17 +32,30 @@ export class ApiError extends Error {
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = endpoint.startsWith('/') ? endpoint : `/api/${endpoint}`;
-  const headers = new Headers(options.headers || {});
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
-  if (options.body && typeof options.body === 'string' && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
+  const fetchOptions: RequestInit = {
+    ...options,
+    credentials: 'include',
+  };
+
+  if (!isFormData) {
+    const headers = new Headers(options.headers || {});
+    if (options.body && typeof options.body === 'string' && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    fetchOptions.headers = headers;
+  } else if (options.headers) {
+    fetchOptions.headers = new Headers(options.headers);
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-    credentials: 'include',
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, fetchOptions);
+  } catch (err: any) {
+    const msg = err?.message || '網路連線失敗或請求被中斷';
+    throw new ApiError(`網路連線異常 (${msg})，請檢查連線或稍後再試。`, 0);
+  }
 
   if (!response.ok) {
     let errorMsg = `HTTP ${response.status} ${response.statusText}`;
@@ -345,10 +358,16 @@ export const api = {
       );
     },
     readBinaryFile: async (expId: string, path: string): Promise<Blob> => {
-      const res = await fetch(
-        `/api/experiments/${encodeURIComponent(expId)}/workspace/file?path=${encodeURIComponent(path)}&raw=true`,
-        { credentials: 'include' }
-      );
+      let res: Response;
+      try {
+        res = await fetch(
+          `/api/experiments/${encodeURIComponent(expId)}/workspace/file?path=${encodeURIComponent(path)}&raw=true`,
+          { credentials: 'include' }
+        );
+      } catch (err: any) {
+        const msg = err?.message || '網路連線失敗或請求被中斷';
+        throw new ApiError(`網路連線異常 (${msg})，請檢查連線或稍後再試。`, 0);
+      }
       if (!res.ok) {
         let errorMsg = `HTTP ${res.status} ${res.statusText}`;
         try {
