@@ -254,6 +254,25 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
     }
   };
 
+  const [syncingMemberId, setSyncingMemberId] = useState<string | null>(null);
+
+  const handleRetrySync = async (member: CourseMembership) => {
+    setSyncingMemberId(member.id);
+    try {
+      const res = await api.courseMembers.sync(course.id, member.id);
+      if (res.sync?.status === 'ready') {
+        onSuccess(`成功為 @${member.username} 同步 GitHub 協作者權限！`);
+      } else if (res.sync?.status === 'failed') {
+        onError(res.sync.error || '同步失敗');
+      }
+      loadData();
+    } catch (err: any) {
+      onError(err.message || '重試同步失敗');
+    } finally {
+      setSyncingMemberId(null);
+    }
+  };
+
   const getStatusBadge = (status: Course['status']) => {
     switch (status) {
       case 'active':
@@ -543,6 +562,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                     <th className="px-5 py-3">不可變 GitHub ID</th>
                     <th className="px-5 py-3">課程角色</th>
                     <th className="px-5 py-3">狀態</th>
+                    <th className="px-5 py-3">GitHub 權限</th>
                     <th className="px-5 py-3">加入時間</th>
                     {isCollaborator && <th className="px-5 py-3 text-right">操作</th>}
                   </tr>
@@ -563,7 +583,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                         <td className="px-5 py-3.5 font-mono text-xs text-slate-500">{m.github_id}</td>
                         <td className="px-5 py-3.5">
                           <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                            協作者
+                            {m.role === 'teacher' ? '教師' : m.role === 'assistant' ? '助教' : '學生'}
                           </span>
                         </td>
                         <td className="px-5 py-3.5">
@@ -584,6 +604,56 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                               <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
                               <span>停權 (suspended)</span>
                             </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          {m.role !== 'student' ? (
+                            <span className="text-xs text-slate-400" title="非學生，毋須 GitHub 協作者權限">
+                              —
+                            </span>
+                          ) : m.github_permission_status === 'ready' ? (
+                            <span
+                              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              title={m.github_synced_at ? `已於 ${m.github_synced_at.slice(0, 19).replace('T', ' ')} 同步 push 權限` : '已同步 push 權限'}
+                            >
+                              <span>✓ 已同步</span>
+                            </span>
+                          ) : m.github_permission_status === 'pending' ? (
+                            <span
+                              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200"
+                              title="正在向 GitHub 同步協作者權限"
+                            >
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                              <span>同步中</span>
+                            </span>
+                          ) : m.github_permission_status === 'failed' ? (
+                            <div className="inline-flex items-center space-x-1.5">
+                              <span
+                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-red-50 text-red-700 border border-red-200 cursor-help"
+                                title={m.github_permission_error || 'GitHub 協作者同步失敗'}
+                              >
+                                <span>✗ 同步失敗</span>
+                              </span>
+                              {isCollaborator && (
+                                <button
+                                  onClick={() => handleRetrySync(m)}
+                                  disabled={syncingMemberId === m.id}
+                                  className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50 cursor-pointer"
+                                  title="點擊重新同步 GitHub 協作者權限"
+                                >
+                                  {syncingMemberId === m.id ? '同步中...' : '重試'}
+                                </button>
+                              )}
+                            </div>
+                          ) : m.github_permission_status === 'removed' ? (
+                            <span
+                              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-200"
+                              title="已從 GitHub Repository 協作者名單移除"
+                            >
+                              <span>— 已移除</span>
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-400">待同步</span>
                           )}
                         </td>
                         <td className="px-5 py-3.5 text-xs text-slate-400">
@@ -609,7 +679,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   })}
                   {members.length === 0 && (
                     <tr>
-                      <td colSpan={isCollaborator ? 6 : 5} className="text-center py-8 text-slate-400 text-xs">
+                      <td colSpan={isCollaborator ? 7 : 6} className="text-center py-8 text-slate-400 text-xs">
                         目前尚無任何成員
                       </td>
                     </tr>

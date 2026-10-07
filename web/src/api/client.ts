@@ -143,6 +143,17 @@ export const api = {
       );
       return res.member;
     },
+    sync: async (
+      courseId: string,
+      memberId: string
+    ): Promise<{ success: boolean; member: CourseMembership; sync?: any }> => {
+      return await request(
+        `/api/courses/${encodeURIComponent(courseId)}/members/${encodeURIComponent(memberId)}/sync`,
+        {
+          method: 'POST',
+        }
+      );
+    },
   },
 
   // 實驗管理 (Experiments)
@@ -250,6 +261,17 @@ export const api = {
         }
       );
       return res.member;
+    },
+    sync: async (
+      experimentId: string,
+      memberId: string
+    ): Promise<{ success: boolean; member: ExperimentMembership; sync?: any }> => {
+      return await request(
+        `/api/experiments/${encodeURIComponent(experimentId)}/members/${encodeURIComponent(memberId)}/sync`,
+        {
+          method: 'POST',
+        }
+      );
     },
   },
 

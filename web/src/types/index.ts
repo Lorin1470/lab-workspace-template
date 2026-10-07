@@ -191,6 +191,8 @@ export interface Experiment {
   group_name?: string | null;
 }
 
+export type GitHubPermissionStatus = 'pending' | 'ready' | 'failed' | 'removed';
+
 export interface CourseMembership {
   id: string;
   course_id: string;
@@ -198,6 +200,9 @@ export interface CourseMembership {
   username: string;
   role: CourseRole;
   status: string;
+  github_permission_status?: GitHubPermissionStatus;
+  github_permission_error?: string | null;
+  github_synced_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -210,6 +215,9 @@ export interface ExperimentMembership {
   role: ExperimentRole;
   group_name?: string | null;
   status: string;
+  github_permission_status?: GitHubPermissionStatus;
+  github_permission_error?: string | null;
+  github_synced_at?: string | null;
   created_at: string;
   updated_at: string;
 }

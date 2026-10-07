@@ -348,7 +348,12 @@ class MockFrontendD1 {
             return { success: true };
           }
           if (q.startsWith('INSERT INTO course_memberships')) {
-            const [id, course_id, github_id, username, role, status, created_at, updated_at] = binds;
+            let [id, course_id, github_id, username, role, status, created_at, updated_at] = binds;
+            if (binds.length >= 11) {
+              [id, course_id, github_id, username, role, status] = binds;
+              created_at = binds[9];
+              updated_at = binds[10];
+            }
             for (const m of this.courseMemberships.values()) {
               if (m.course_id === course_id && m.github_id === github_id) {
                 throw new Error(`UNIQUE constraint failed: course_memberships.course_id, course_memberships.github_id`);
@@ -374,8 +379,8 @@ class MockFrontendD1 {
                 const idx = (q.slice(0, q.indexOf('role = ?')).match(/\?/g) || []).length;
                 m.role = binds[idx];
               }
-              if (q.includes('status = ?')) {
-                const idx = (q.slice(0, q.indexOf('status = ?')).match(/\?/g) || []).length;
+              if (/(?:^|[\s,])status\s*=\s*\?/.test(q)) {
+                const idx = (q.slice(0, q.search(/(?:^|[\s,])status\s*=\s*\?/)).match(/\?/g) || []).length;
                 m.status = binds[idx];
               }
               m.updated_at = new Date().toISOString();
@@ -474,7 +479,12 @@ class MockFrontendD1 {
             return { success: true };
           }
           if (q.startsWith('INSERT INTO experiment_memberships')) {
-            const [id, experiment_id, github_id, username, role, group_name, status, created_at, updated_at] = binds;
+            let [id, experiment_id, github_id, username, role, group_name, status, created_at, updated_at] = binds;
+            if (binds.length >= 12) {
+              [id, experiment_id, github_id, username, role, group_name, status] = binds;
+              created_at = binds[10];
+              updated_at = binds[11];
+            }
             for (const em of this.experimentMemberships.values()) {
               if (em.experiment_id === experiment_id && em.github_id === github_id) {
                 throw new Error(`UNIQUE constraint failed: experiment_memberships.experiment_id, experiment_memberships.github_id`);
@@ -505,8 +515,8 @@ class MockFrontendD1 {
                 const idx = (q.slice(0, q.indexOf('role = ?')).match(/\?/g) || []).length;
                 em.role = binds[idx];
               }
-              if (q.includes('status = ?')) {
-                const idx = (q.slice(0, q.indexOf('status = ?')).match(/\?/g) || []).length;
+              if (/(?:^|[\s,])status\s*=\s*\?/.test(q)) {
+                const idx = (q.slice(0, q.search(/(?:^|[\s,])status\s*=\s*\?/)).match(/\?/g) || []).length;
                 em.status = binds[idx];
               }
               em.updated_at = new Date().toISOString();

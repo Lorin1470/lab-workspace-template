@@ -8,6 +8,10 @@ import {
   sanitizeErrorMessage,
 } from './services/provisioning.ts';
 import {
+  syncStudentCollaborator,
+  removeStudentCollaborator,
+} from './services/collaborators.ts';
+import {
   getWorkspaceRepository,
   listFiles,
   readFile,
@@ -31,6 +35,7 @@ interface Env {
   GITHUB_APP_TARGET_OWNER?: string;
   GITHUB_TEMPLATE_REPO?: string;
   FETCH?: typeof fetch;
+  CUSTOM_FETCH?: typeof fetch;
 }
 
 // 雜湊 Session Token (SHA-256)
@@ -1209,7 +1214,7 @@ export const onRequest = async (context: any) => {
         }
 
         const res: any = await env.DB.prepare(
-          'SELECT id, course_id, github_id, username, role, status, created_at, updated_at FROM course_memberships WHERE course_id = ? ORDER BY role DESC, username ASC'
+          'SELECT id, course_id, github_id, username, role, status, github_permission_status, github_permission_error, github_synced_at, created_at, updated_at FROM course_memberships WHERE course_id = ? ORDER BY role DESC, username ASC'
         ).bind(courseId).all();
 
         return new Response(JSON.stringify({ success: true, course_members: res.results || [] }), { headers });
@@ -1253,16 +1258,42 @@ export const onRequest = async (context: any) => {
           await env.DB.prepare(
             'UPDATE course_memberships SET role = ?, username = ?, status = "active", updated_at = ? WHERE id = ?'
           ).bind(role, username, now, existingMem.id).run();
+
+          // 重新啟用時，若是學生且在 Course Mode，同步 GitHub 協作者權限
+          if (role === 'student' && course.mode === 'course' && course.github_repository) {
+            const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+            await syncStudentCollaborator(env, {
+              repository: course.github_repository,
+              github_id,
+              username,
+              membershipId: existingMem.id,
+              membershipType: 'course',
+            }, fetchFn);
+          }
+
           const reactivated: any = await safeD1First(env.DB.prepare('SELECT * FROM course_memberships WHERE id = ?').bind(existingMem.id));
           return new Response(JSON.stringify({ success: true, member: reactivated }), { status: 200, headers });
         }
 
         const memId = `cm_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
         const now = new Date().toISOString();
+        const initPermStatus = role === 'student' ? 'pending' : null;
         await env.DB.prepare(
-          `INSERT INTO course_memberships (id, course_id, github_id, username, role, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(memId, courseId, github_id, username, role, 'active', now, now).run();
+          `INSERT INTO course_memberships (id, course_id, github_id, username, role, status, github_permission_status, github_permission_error, github_synced_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(memId, courseId, github_id, username, role, 'active', initPermStatus || 'pending', null, null, now, now).run();
+
+        // 僅對「學生」角色同步 GitHub Repository Collaborator (permission: push)
+        if (role === 'student' && course.mode === 'course' && course.github_repository) {
+          const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+          await syncStudentCollaborator(env, {
+            repository: course.github_repository,
+            github_id,
+            username,
+            membershipId: memId,
+            membershipType: 'course',
+          }, fetchFn);
+        }
 
         const createdMember: any = await safeD1First(env.DB.prepare('SELECT * FROM course_memberships WHERE id = ?').bind(memId));
         return new Response(JSON.stringify({ success: true, member: createdMember }), { status: 201, headers });
@@ -1286,7 +1317,7 @@ export const onRequest = async (context: any) => {
       }
 
       // IDOR 防護 1: 檢查所屬課程是否存在
-      const course: any = await safeD1First(env.DB.prepare('SELECT id FROM courses WHERE id = ?').bind(courseId));
+      const course: any = await safeD1First(env.DB.prepare('SELECT id, status, mode, github_repository FROM courses WHERE id = ?').bind(courseId));
       if (!course) {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
@@ -1347,8 +1378,93 @@ export const onRequest = async (context: any) => {
         binds.push(memberId);
 
         await env.DB.prepare(`UPDATE course_memberships SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+
+        // 協作者權限連動處理
+        const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+        const finalRole = body.role !== undefined ? body.role : targetMem.role;
+        const finalStatus = body.status !== undefined ? body.status : targetMem.status;
+
+        if (course.mode === 'course' && course.github_repository) {
+          if (finalRole === 'student' && (finalStatus === 'inactive' || finalStatus === 'suspended')) {
+            // 停用學生：檢查是否仍有其他有效 membership 需要此倉庫，若無則移除
+            await removeStudentCollaborator(env, {
+              repository: course.github_repository,
+              github_id: targetMem.github_id,
+              username: targetMem.username,
+              membershipId: memberId,
+              membershipType: 'course',
+            }, fetchFn);
+          } else if (finalRole === 'student' && finalStatus === 'active' && targetMem.status !== 'active') {
+            // 重新啟用學生：同步至倉庫協作者
+            await syncStudentCollaborator(env, {
+              repository: course.github_repository,
+              github_id: targetMem.github_id,
+              username: targetMem.username,
+              membershipId: memberId,
+              membershipType: 'course',
+            }, fetchFn);
+          }
+        }
+
         const updatedMem: any = await safeD1First(env.DB.prepare('SELECT * FROM course_memberships WHERE id = ?').bind(memberId));
         return new Response(JSON.stringify({ success: true, member: updatedMem }), { status: 200, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.4.1 重試同步課程成員之 GitHub 協作者權限 (POST /api/courses/:id/members/:memberId/sync)
+    const courseMemberSyncMatch = path.match(/^courses\/([a-zA-Z0-9_-]+)\/members\/([a-zA-Z0-9_-]+)\/sync$/);
+    if (courseMemberSyncMatch) {
+      const courseId = courseMemberSyncMatch[1];
+      const memberId = courseMemberSyncMatch[2];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const course: any = await safeD1First(
+        env.DB.prepare('SELECT id, status, mode, github_repository FROM courses WHERE id = ?').bind(courseId)
+      );
+      if (!course) {
+        return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
+      }
+
+      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage permissions' }), { status: 403, headers });
+      }
+
+      const targetMem: any = await safeD1First(
+        env.DB.prepare('SELECT * FROM course_memberships WHERE id = ? AND course_id = ?').bind(memberId, courseId)
+      );
+      if (!targetMem) {
+        return new Response(JSON.stringify({ error: 'Course member not found' }), { status: 404, headers });
+      }
+
+      if (request.method === 'POST') {
+        if (targetMem.role !== 'student') {
+          return new Response(JSON.stringify({ error: 'Only student members are synchronized with GitHub repository permissions' }), { status: 400, headers });
+        }
+
+        if (course.mode !== 'course' || !course.github_repository) {
+          return new Response(JSON.stringify({ error: 'Course does not have a course repository configured' }), { status: 400, headers });
+        }
+
+        const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+        const syncResult = await syncStudentCollaborator(env, {
+          repository: course.github_repository,
+          github_id: targetMem.github_id,
+          username: targetMem.username,
+          membershipId: memberId,
+          membershipType: 'course',
+        }, fetchFn);
+
+        const updatedMem: any = await safeD1First(env.DB.prepare('SELECT * FROM course_memberships WHERE id = ?').bind(memberId));
+        return new Response(JSON.stringify({ success: true, member: updatedMem, sync: syncResult }), { status: 200, headers });
       }
 
       return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
@@ -1631,7 +1747,7 @@ export const onRequest = async (context: any) => {
         }
 
         const res: any = await env.DB.prepare(
-          'SELECT id, experiment_id, github_id, username, role, group_name, status, created_at, updated_at FROM experiment_memberships WHERE experiment_id = ? AND status = "active"'
+          'SELECT id, experiment_id, github_id, username, role, group_name, status, github_permission_status, github_permission_error, github_synced_at, created_at, updated_at FROM experiment_memberships WHERE experiment_id = ? AND status = "active"'
         ).bind(expId).all();
 
         return new Response(JSON.stringify({ success: true, experiment_members: res.results || [] }), { headers });
@@ -1643,7 +1759,7 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ error: 'Forbidden: Only course members can assign members to experiments' }), { status: 403, headers });
         }
 
-        const expCourse: any = await safeD1First(env.DB.prepare('SELECT status FROM courses WHERE id = ?').bind(exp.course_id));
+        const expCourse: any = await safeD1First(env.DB.prepare('SELECT id, status, mode, github_repository FROM courses WHERE id = ?').bind(exp.course_id));
         if (expCourse && expCourse.status !== 'active') {
           return new Response(JSON.stringify({ error: `Cannot assign members in a ${expCourse.status} course` }), { status: 400, headers });
         }
@@ -1686,16 +1802,42 @@ export const onRequest = async (context: any) => {
           await env.DB.prepare(
             'UPDATE experiment_memberships SET role = ?, group_name = ?, status = "active", updated_at = ? WHERE id = ?'
           ).bind(role, group_name, now, existingMem.id).run();
+
+          // Experiment Mode 下若重新啟用學生，同步該實驗的 Repository
+          if (expCourse?.mode === 'experiment' && exp.repository && role === 'student') {
+            const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+            await syncStudentCollaborator(env, {
+              repository: exp.repository,
+              github_id,
+              username,
+              membershipId: existingMem.id,
+              membershipType: 'experiment',
+            }, fetchFn);
+          }
+
           const reactivated: any = await safeD1First(env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ?').bind(existingMem.id));
           return new Response(JSON.stringify({ success: true, member: reactivated }), { status: 200, headers });
         }
 
         const emId = `em_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
         const now = new Date().toISOString();
+        const initPermStatus = role === 'student' ? 'pending' : null;
         await env.DB.prepare(
-          `INSERT INTO experiment_memberships (id, experiment_id, github_id, username, role, group_name, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(emId, expId, github_id, username, role, group_name, 'active', now, now).run();
+          `INSERT INTO experiment_memberships (id, experiment_id, github_id, username, role, group_name, status, github_permission_status, github_permission_error, github_synced_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(emId, expId, github_id, username, role, group_name, 'active', initPermStatus || 'pending', null, null, now, now).run();
+
+        // 僅在 Experiment Mode 下針對學生同步該實驗的 Repository
+        if (expCourse?.mode === 'experiment' && exp.repository && role === 'student') {
+          const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+          await syncStudentCollaborator(env, {
+            repository: exp.repository,
+            github_id,
+            username,
+            membershipId: emId,
+            membershipType: 'experiment',
+          }, fetchFn);
+        }
 
         const createdExpMem: any = await safeD1First(env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ?').bind(emId));
         return new Response(JSON.stringify({ success: true, member: createdExpMem }), { status: 201, headers });
@@ -1718,7 +1860,7 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
       }
 
-      const exp: any = await safeD1First(env.DB.prepare('SELECT course_id FROM experiments WHERE id = ?').bind(expId));
+      const exp: any = await safeD1First(env.DB.prepare('SELECT id, course_id, repository FROM experiments WHERE id = ?').bind(expId));
       if (!exp) {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
@@ -1776,8 +1918,95 @@ export const onRequest = async (context: any) => {
         binds.push(memberId);
 
         await env.DB.prepare(`UPDATE experiment_memberships SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
+
+        // Experiment Mode 下協作者權限連動處理
+        const expCourse: any = await safeD1First(env.DB.prepare('SELECT id, mode FROM courses WHERE id = ?').bind(exp.course_id));
+        const finalRole = body.role !== undefined ? body.role : targetMem.role;
+        const finalStatus = body.status !== undefined ? body.status : targetMem.status;
+
+        if (expCourse?.mode === 'experiment' && exp.repository && finalRole === 'student') {
+          const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+          if (finalStatus === 'inactive') {
+            await removeStudentCollaborator(env, {
+              repository: exp.repository,
+              github_id: targetMem.github_id,
+              username: targetMem.username,
+              membershipId: memberId,
+              membershipType: 'experiment',
+            }, fetchFn);
+          } else if (finalStatus === 'active' && targetMem.status !== 'active') {
+            await syncStudentCollaborator(env, {
+              repository: exp.repository,
+              github_id: targetMem.github_id,
+              username: targetMem.username,
+              membershipId: memberId,
+              membershipType: 'experiment',
+            }, fetchFn);
+          }
+        }
+
         const updatedMem: any = await safeD1First(env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ?').bind(memberId));
         return new Response(JSON.stringify({ success: true, member: updatedMem }), { status: 200, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.8.1 重試同步實驗成員之 GitHub 協作者權限 (POST /api/experiments/:id/members/:memberId/sync)
+    const expMemberSyncMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/members\/([a-zA-Z0-9_-]+)\/sync$/);
+    if (expMemberSyncMatch) {
+      const expId = expMemberSyncMatch[1];
+      const memberId = expMemberSyncMatch[2];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT id, course_id, repository FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage permissions' }), { status: 403, headers });
+      }
+
+      const targetMem: any = await safeD1First(
+        env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ? AND experiment_id = ?').bind(memberId, expId)
+      );
+      if (!targetMem) {
+        return new Response(JSON.stringify({ error: 'Experiment member not found' }), { status: 404, headers });
+      }
+
+      if (request.method === 'POST') {
+        if (targetMem.role !== 'student') {
+          return new Response(JSON.stringify({ error: 'Only student members are synchronized with GitHub repository permissions' }), { status: 400, headers });
+        }
+
+        const expCourse: any = await safeD1First(env.DB.prepare('SELECT id, mode, github_repository FROM courses WHERE id = ?').bind(exp.course_id));
+        if (expCourse?.mode === 'course') {
+          return new Response(JSON.stringify({ error: 'In Course Mode, repository permissions are synchronized at the Course level' }), { status: 400, headers });
+        }
+
+        if (!exp.repository) {
+          return new Response(JSON.stringify({ error: 'Experiment does not have a repository configured' }), { status: 400, headers });
+        }
+
+        const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+        const syncResult = await syncStudentCollaborator(env, {
+          repository: exp.repository,
+          github_id: targetMem.github_id,
+          username: targetMem.username,
+          membershipId: memberId,
+          membershipType: 'experiment',
+        }, fetchFn);
+
+        const updatedMem: any = await safeD1First(env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ?').bind(memberId));
+        return new Response(JSON.stringify({ success: true, member: updatedMem, sync: syncResult }), { status: 200, headers });
       }
 
       return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });

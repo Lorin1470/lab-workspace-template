@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS course_memberships (
     username TEXT NOT NULL,                    -- 顯示與查詢快取 (可變)
     role TEXT NOT NULL CHECK(role IN ('teacher', 'assistant', 'student')),
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'suspended')),
+    github_permission_status TEXT NOT NULL DEFAULT 'pending' CHECK(github_permission_status IN ('pending', 'ready', 'failed', 'removed')),
+    github_permission_error TEXT,
+    github_synced_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(course_id, github_id)
@@ -121,6 +124,9 @@ CREATE TABLE IF NOT EXISTS experiment_memberships (
     role TEXT NOT NULL CHECK(role IN ('student', 'assistant')),
     group_name TEXT,                           -- 組別 (例如 "第 1 組")
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'inactive')),
+    github_permission_status TEXT NOT NULL DEFAULT 'pending' CHECK(github_permission_status IN ('pending', 'ready', 'failed', 'removed')),
+    github_permission_error TEXT,
+    github_synced_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(experiment_id, github_id)
@@ -128,3 +134,22 @@ CREATE TABLE IF NOT EXISTS experiment_memberships (
 
 CREATE INDEX IF NOT EXISTS idx_em_user ON experiment_memberships(github_id);
 CREATE INDEX IF NOT EXISTS idx_em_exp ON experiment_memberships(experiment_id);
+
+-- 5. 儲存庫協作者同步狀態表 (repository_collaborators)
+-- 獨立追蹤學生在各實體 GitHub 儲存庫之 Collaborator 權限
+CREATE TABLE IF NOT EXISTS repository_collaborators (
+    id TEXT PRIMARY KEY,                       -- 系統 UUID (例如 "rc_...")
+    repository TEXT NOT NULL,                  -- 目標 GitHub Repo 全名 (例如 "your-org/electronics-lab-01")
+    github_id TEXT NOT NULL,                   -- 使用者不可變 GitHub ID
+    username TEXT NOT NULL,                    -- GitHub 帳號
+    permission TEXT NOT NULL DEFAULT 'push',   -- 權限等級 (固定為 push)
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'ready', 'failed', 'removed')),
+    error_message TEXT,                        -- 去敏後之錯誤摘要
+    synced_at DATETIME,                        -- 最近一次同步成功/失敗時間
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(repository, github_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_repo_collab_repo ON repository_collaborators(repository);
+CREATE INDEX IF NOT EXISTS idx_repo_collab_user ON repository_collaborators(github_id);
