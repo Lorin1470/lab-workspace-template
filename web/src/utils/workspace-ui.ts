@@ -27,8 +27,8 @@ export function resolveNavbarRepository(
  * 確保點擊「開啟實驗工作區」CTA 直接前往工作區分頁 ('files')
  */
 export function resolveInitialExperimentTab(
-  requestedTab?: 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download' | 'agent'
-): 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download' | 'agent' {
+  requestedTab?: 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download'
+): 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download' {
   return requestedTab || 'files';
 }
 

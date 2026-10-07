@@ -23,13 +23,10 @@ import {
   FolderTree,
   Upload,
   Download,
-  Bot,
   UserPlus,
   RefreshCw,
   AlertCircle,
   CheckCircle2,
-  ShieldCheck,
-  Copy,
   Printer,
   Clock,
   History,
@@ -53,7 +50,7 @@ interface ExperimentDetailProps {
   onSuccess: (msg: string) => void;
 }
 
-type TabType = 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download' | 'agent';
+type TabType = 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download';
 
 const expStatusMap: Record<ExperimentStatus, { label: string; badgeClass: string; icon: string }> = {
   not_started: {
@@ -199,20 +196,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
 
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
-  const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
-  const [agentContext, setAgentContext] = useState<Awaited<ReturnType<typeof api.agent.context>> | null>(null);
-  const [agentPath, setAgentPath] = useState('README.md');
-  const [agentContent, setAgentContent] = useState('');
-  const [agentSha, setAgentSha] = useState('');
-  const [agentMessage, setAgentMessage] = useState('Agent 更新實驗工作區檔案');
-  const [agentConfirmed, setAgentConfirmed] = useState(false);
-  const [agentLoading, setAgentLoading] = useState(false);
-  const [agentStatus, setAgentStatus] = useState<string | null>(null);
-  const [taskPrompt, setTaskPrompt] = useState('');
-  const [taskPlan, setTaskPlan] = useState<any | null>(null);
-  const [taskConfirmed, setTaskConfirmed] = useState(false);
-  const [taskLoading, setTaskLoading] = useState(false);
-  const [taskStatus, setTaskStatus] = useState<string | null>(null);
 
   // Provisioning 狀態與歷程控制
   const [isProvisioning, setIsProvisioning] = useState(false);
@@ -220,101 +203,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   const [provisionHistory, setProvisionHistory] = useState<ExperimentProvisioning[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-
-  const loadAgentContext = async () => {
-    setAgentLoading(true);
-    setAgentStatus(null);
-    try {
-      setAgentContext(await api.agent.context(experiment.id));
-    } catch (err: any) {
-      setAgentStatus(err instanceof ApiError ? err.message : '無法載入 Agent 工作區 context');
-    } finally {
-      setAgentLoading(false);
-    }
-  };
-
-  const readAgentFile = async () => {
-    if (!agentPath.trim()) return;
-    setAgentLoading(true);
-    setAgentStatus(null);
-    try {
-      const file = await api.agent.readFile(experiment.id, agentPath.trim());
-      setAgentContent(file.content);
-      setAgentSha(file.sha);
-      setAgentConfirmed(false);
-      setAgentStatus(`已讀取 ${file.path}，目前 SHA: ${file.sha}`);
-    } catch (err: any) {
-      setAgentStatus(err instanceof ApiError ? err.message : 'Agent 讀取檔案失敗');
-    } finally {
-      setAgentLoading(false);
-    }
-  };
-
-  const writeAgentFile = async () => {
-    if (!agentConfirmed) {
-      setAgentStatus('請先確認檔案內容與目標路徑，再允許 Agent 寫入。');
-      return;
-    }
-    setAgentLoading(true);
-    setAgentStatus(null);
-    try {
-      const result = await api.agent.writeFile(experiment.id, {
-        path: agentPath.trim(),
-        content: agentContent,
-        message: agentMessage,
-        sha: agentSha,
-      });
-      setAgentSha(result.content_sha);
-      setAgentConfirmed(false);
-      setAgentStatus(`Agent 已建立 GitHub commit ${result.commit_sha}`);
-      await loadActivityLogs();
-    } catch (err: any) {
-      setAgentStatus(err instanceof ApiError ? err.message : 'Agent 寫入檔案失敗');
-    } finally {
-      setAgentLoading(false);
-    }
-  };
-
-  const proposeAgentTask = async () => {
-    if (!taskPrompt.trim()) return;
-    setTaskLoading(true);
-    setTaskStatus(null);
-    setTaskPlan(null);
-    setTaskConfirmed(false);
-    try {
-      setTaskPlan(await api.agent.proposeTask(experiment.id, taskPrompt.trim()));
-      setTaskStatus('已產生提案；請審閱變更內容後再確認執行。');
-    } catch (err: any) {
-      setTaskStatus(err instanceof ApiError ? err.message : 'Agent 任務提案失敗');
-    } finally {
-      setTaskLoading(false);
-    }
-  };
-
-  const executeAgentTask = async () => {
-    if (!taskPlan || !taskConfirmed) {
-      setTaskStatus('請先審閱並確認 Agent 任務提案。');
-      return;
-    }
-    setTaskLoading(true);
-    setTaskStatus(null);
-    try {
-      const result = await api.agent.executeTask(experiment.id, taskPrompt.trim(), taskPlan.plan_hash);
-      setTaskConfirmed(false);
-      setTaskStatus(`Agent 任務已完成，GitHub commit：${result.commit_sha}`);
-      await loadActivityLogs();
-    } catch (err: any) {
-      setTaskStatus(err instanceof ApiError ? err.message : 'Agent 任務執行失敗');
-    } finally {
-      setTaskLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'agent') {
-      void loadAgentContext();
-    }
-  }, [activeTab, experiment.id]);
 
   // 載入成員
   const loadMembers = async () => {
@@ -524,12 +412,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     } catch (err: any) {
       onError(err instanceof ApiError ? err.message : '無法從真實 Workspace 建立下載檔案。');
     }
-  };
-
-  const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedPrompt(id);
-    setTimeout(() => setCopiedPrompt(null), 2000);
   };
 
   const parseFilesChanged = (raw?: string): string[] => {
@@ -915,7 +797,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             { id: 'files', label: '📁 工作區 (Workspace)', icon: FolderTree },
             { id: 'upload', label: '📤 上傳資料', icon: Upload },
             { id: 'download', label: '📥 打包下載', icon: Download },
-            { id: 'agent', label: '🤖 Agent 協作', icon: Bot },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -1417,232 +1298,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   <span>下載完整 ZIP</span>
                 </button>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* 7. Agent 協作指南 */}
-        {activeTab === 'agent' && (
-          <div className="space-y-6">
-            <div className="border border-blue-200 bg-blue-50 rounded-xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-bold text-blue-900">Agent 工作區 context</h3>
-                  <p className="text-xs text-blue-800 mt-1">
-                    Agent 只能透過目前實驗的 Workspace 權限讀寫；每次寫入都必須使用最新 SHA 並經過明確確認。
-                  </p>
-                </div>
-                <button
-                  onClick={loadAgentContext}
-                  disabled={agentLoading}
-                  className="px-3 py-2 rounded-lg bg-white border border-blue-200 text-blue-700 text-xs font-semibold disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 inline mr-1 ${agentLoading ? 'animate-spin' : ''}`} />
-                  載入 context
-                </button>
-              </div>
-              {agentContext && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-blue-950">
-                  <div>Repository：<code>{agentContext.experiment.repository}</code></div>
-                  <div>報告模式：{agentContext.experiment.report_mode}</div>
-                  <div className="md:col-span-2">Raw：{agentContext.rules.raw}</div>
-                  <div className="md:col-span-2">Photos：{agentContext.rules.photos}</div>
-                  <div className="md:col-span-2">Report：{agentContext.rules.reports}</div>
-                </div>
-              )}
-            </div>
-
-            <div className="border border-slate-200 rounded-xl p-4 space-y-3">
-              <h3 className="font-bold text-slate-800">Agent 讀取與提議寫入</h3>
-              <p className="text-xs text-slate-500">
-                這個受控入口示範 Agent → Workspace Service → 真實 GitHub commit。raw/ 不可透過此入口寫入，照片與原始資料請使用 Workspace 專用上傳流程。
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-                <input
-                  value={agentPath}
-                  onChange={(e) => setAgentPath(e.target.value)}
-                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono"
-                  placeholder="例如 report/report.md 或 processed/clean.csv"
-                />
-                <button
-                  onClick={readAgentFile}
-                  disabled={agentLoading || !agentPath.trim()}
-                  className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold disabled:opacity-50"
-                >
-                  讀取檔案
-                </button>
-              </div>
-              <textarea
-                value={agentContent}
-                onChange={(e) => {
-                  setAgentContent(e.target.value);
-                  setAgentConfirmed(false);
-                }}
-                className="w-full min-h-48 border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono"
-                placeholder="讀取檔案後，Agent 可在此提出修改內容"
-              />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <input
-                  value={agentMessage}
-                  onChange={(e) => setAgentMessage(e.target.value)}
-                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                  placeholder="Git commit message"
-                />
-                <div className="text-xs text-slate-500 flex items-center px-2">
-                  Current SHA：<code className="ml-1 break-all">{agentSha || '尚未讀取'}</code>
-                </div>
-              </div>
-              <label className="flex items-start gap-2 text-xs text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={agentConfirmed}
-                  onChange={(e) => setAgentConfirmed(e.target.checked)}
-                  className="mt-0.5"
-                />
-                我已審閱 Agent 將寫入的路徑、內容與 commit message，允許建立真實 GitHub commit。
-              </label>
-              <button
-                onClick={writeAgentFile}
-                disabled={agentLoading || !agentConfirmed || !agentSha || !agentMessage.trim()}
-                className="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold disabled:opacity-50"
-              >
-                {agentLoading ? '處理中…' : '確認並建立 GitHub commit'}
-              </button>
-              {agentStatus && (
-                <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-700">
-                  {agentStatus}
-                </div>
-              )}
-            </div>
-
-            <div className="border border-purple-200 bg-purple-50 rounded-xl p-4 space-y-3">
-              <div>
-                <h3 className="font-bold text-purple-900">Agent Task Workflow</h3>
-                <p className="text-xs text-purple-800 mt-1">
-                  用自然語言提出報告更新、Workspace 完成度檢查或照片狀態檢視。系統會先讀取 context 並產生可審閱結果；未確認前不會寫入 GitHub。
-                </p>
-              </div>
-              <textarea
-                value={taskPrompt}
-                onChange={(e) => {
-                  setTaskPrompt(e.target.value);
-                  setTaskPlan(null);
-                  setTaskConfirmed(false);
-                }}
-                className="w-full min-h-24 border border-purple-200 rounded-lg px-3 py-2 text-sm"
-                placeholder="例如：幫我看看這次實驗還缺哪些資料，或根據目前 Workspace 資料更新報告。"
-              />
-              <button
-                onClick={proposeAgentTask}
-                disabled={taskLoading || !taskPrompt.trim()}
-                className="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold disabled:opacity-50"
-              >
-                {taskLoading ? '分析中…' : '分析任務並產生提案'}
-              </button>
-              {taskPlan && (
-                <div className="bg-white border border-purple-200 rounded-lg p-3 space-y-2 text-xs text-slate-700">
-                  <div>任務類型：<code>{taskPlan.intent}</code></div>
-                  {taskPlan.summary && <div className="font-semibold text-slate-800">{taskPlan.summary}</div>}
-                  <div>讀取：{taskPlan.reads.map((item: any) => item.path).join('、')}</div>
-                  {taskPlan.findings?.map((finding: string) => (
-                    <div key={finding} className="text-slate-700">• {finding}</div>
-                  ))}
-                  {taskPlan.warnings?.map((warning: string) => (
-                    <div key={warning} className="text-amber-700">⚠️ {warning}</div>
-                  ))}
-                  {taskPlan.changes.map((change: any) => (
-                    <div key={change.path} className="border-t border-slate-100 pt-2">
-                      <div className="font-semibold">{change.operation}：{change.path}</div>
-                      <div className="text-slate-500">{change.summary}</div>
-                      <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap bg-slate-50 rounded p-2">{change.content}</pre>
-                    </div>
-                  ))}
-                  {taskPlan.read_only ? (
-                    <div className="pt-2 font-semibold text-blue-700">
-                      此任務為唯讀檢查，不會修改 GitHub，也不需要確認或 commit。
-                    </div>
-                  ) : (
-                    <>
-                      <label className="flex items-start gap-2 pt-2">
-                        <input
-                          type="checkbox"
-                          checked={taskConfirmed}
-                          onChange={(e) => setTaskConfirmed(e.target.checked)}
-                          className="mt-0.5"
-                        />
-                        我已審閱上述 proposal，允許 Agent 依最新 SHA 建立真實 GitHub commit。
-                      </label>
-                      <button
-                        onClick={executeAgentTask}
-                        disabled={taskLoading || !taskConfirmed}
-                        className="px-4 py-2 rounded-lg bg-emerald-600 text-white font-semibold disabled:opacity-50"
-                      >
-                        確認並執行任務
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-              {taskStatus && (
-                <div className="rounded-lg bg-white border border-purple-200 p-3 text-xs text-slate-700">
-                  {taskStatus}
-                </div>
-              )}
-            </div>
-
-            <div className="bg-purple-50 border border-purple-200 p-4 rounded-xl flex items-start space-x-3">
-              <ShieldCheck className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
-              <div className="text-sm text-purple-900">
-                <p className="font-bold">Agent-First 安全確認機制</p>
-                <p className="mt-0.5">
-                  本地 AI Agent 遵循 <code>.github/skills/experiment-report/SKILL.md</code> 進行操作。在進行 Git Commit 或遠端 Push 之前，必須徵詢使用者審閱與同意，並自動記錄至伺服器端 Activity Log。
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[
-                {
-                  id: 'p1',
-                  title: '🔎 檢查 Workspace 完成度',
-                  prompt: '幫我看看這次實驗還缺哪些資料，並列出目前 Workspace 的缺口。',
-                },
-                {
-                  id: 'p2',
-                  title: '📸 檢視照片保存狀態',
-                  prompt: '幫我整理剛才上傳的照片，先檢查 photos/ 目前有哪些內容；不要修改或移動檔案。',
-                },
-                {
-                  id: 'p3',
-                  title: '📝 根據 Workspace 更新報告',
-                  prompt: '請根據 analysis/ 的曲線圖與 processed/ 的數據，在 report/report.md 中補充「實驗數據分析」與「問題與討論」章節。',
-                },
-              ].map((item) => (
-                <div key={item.id} className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-purple-300 transition-colors">
-                  <div>
-                    <h4 className="font-semibold text-sm text-slate-800">{item.title}</h4>
-                    <p className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200 mt-2 font-mono leading-relaxed">
-                      {item.prompt}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => copyToClipboard(item.prompt, item.id)}
-                    className="mt-3 w-full bg-slate-100 hover:bg-purple-600 hover:text-white text-slate-700 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
-                  >
-                    {copiedPrompt === item.id ? (
-                      <>
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                        <span>已複製指令！</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>一鍵複製 Prompt</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              ))}
             </div>
           </div>
         )}

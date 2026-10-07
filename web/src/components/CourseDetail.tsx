@@ -28,7 +28,7 @@ interface CourseDetailProps {
   course: Course;
   user: AuthUser | null;
   onBack: () => void;
-  onSelectExperiment: (exp: Experiment, initialTab?: 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download' | 'agent') => void;
+  onSelectExperiment: (exp: Experiment, initialTab?: 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download') => void;
   onCourseUpdated: (updated: Course) => void;
   onError: (msg: string) => void;
   onSuccess: (msg: string) => void;

@@ -24,7 +24,7 @@ export const LabDetail: React.FC<LabDetailProps> = ({ lab, onBack }) => (
     <section className="rounded-xl border border-amber-200 bg-amber-50 p-5">
       <h2 className="text-lg font-bold text-amber-900">此舊版實驗檢視器已停用</h2>
       <p className="mt-2 text-sm text-amber-800">
-        「{lab.experiment_name}」請從正式課程流程開啟，以使用真實 GitHub Workspace、Activity Log 與 Agent workflow。
+        「{lab.experiment_name}」請從正式課程流程開啟，以使用真實 GitHub Workspace 與 Activity Log。
       </p>
     </section>
   </div>

@@ -109,7 +109,7 @@ lab-XX-name/
   - 📂 **線上瀏覽**：樹狀圖檢視檔案。
   - 📄 **報告預覽**：線上渲染 Markdown 結報，支援 LaTeX (KaTeX) 數學公式與特性圖展示，支援一鍵列印/匯出 PDF。
   - 📋 **活動紀錄**：展示時間軸（記錄誰在何時透過何者做了什麼）。
-  - 🤖 **Agent Task Workflow**：以自然語言提出 Workspace 完成度檢查、照片狀態檢視或報告更新；系統先讀取真實 context 並產生 proposal，寫入前必須明確確認。
+  - 🔌 **外部 Agent 介面**：提供標準 REST API 讓外部 AI Agent / Agent Skill 安全讀取 Workspace 資料。
 
 ---
 

@@ -15,9 +15,8 @@
  * 8. 路徑穿越防護：../../ 或 URL 編碼穿越遭 400 阻絕
  * 9. Raw Data 聖域鐵律：PUT raw/* 遭 403，專用上傳可寫入 scoped raw/，重複上傳遭 409
  * 10. 報告模式 (Shared vs Separate) 在 Scoped Path 下的權限隔離
- * 11. Agent Context 與 Task 執行在 Scoped Path 下正常運作
- * 12. Activity Log 正確記錄 course.github_repository 作為 repo_name，避免 SQLite NOT NULL 違反
- * 13. 舊版 Experiment Mode 保持 100% 向後相容
+ * 11. Activity Log 正確記錄 course.github_repository 作為 repo_name，避免 SQLite NOT NULL 違反
+ * 12. 舊版 Experiment Mode 保持 100% 向後相容
  */
 
 import http from "node:http";
@@ -1133,50 +1132,6 @@ async function runCourseModeVerification() {
     });
     assert.strictEqual(sepReportTamperRes.status, 403);
     pass("27. Separate 模式下 Bob 嘗試撰寫 Alice 之 report-1001.md 遭 403 阻絕");
-
-    // -------------------------------------------------------------
-    // [群組 7: Agent Context 與 Task 執行在 Scoped Path 下正常運作]
-    // -------------------------------------------------------------
-    console.log("\n▶ [群組 7: Agent Context 與 Task 執行在 Scoped Path 下正常運作]");
-
-    // 7.1 Agent Context 查詢：repository 為 course.github_repository，且 root_files 為相對路徑
-    const agentCtxRes = await fetch(`${BASE_URL}/experiments/${exp1Id}/agent/context`, {
-      headers: authHeader(bobToken),
-    });
-    assert.strictEqual(agentCtxRes.status, 200);
-    const agentCtx = await agentCtxRes.json();
-    assert.strictEqual(agentCtx.context.experiment.repository, "TestLabOrg/ee301-course-repo");
-    assert.strictEqual(agentCtx.context.experiment.code, "lab-01");
-    const rootFilePaths = agentCtx.context.root_files.map((f) => f.path);
-    assert(!rootFilePaths.some((p) => p.startsWith("experiments/")), "Agent root_files must be relative paths");
-    pass("28. Agent Context 正確提供 course.github_repository 與相對路徑清單");
-
-    // 7.2 Agent Task Propose & Execute
-    const proposeRes = await fetch(`${BASE_URL}/experiments/${exp1Id}/agent/task/propose`, {
-      method: "POST",
-      headers: { ...authHeader(bobToken), "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: "請更新 README.md 加入實驗結論",
-      }),
-    });
-    assert.strictEqual(proposeRes.status, 200);
-    const proposeData = await proposeRes.json();
-    assert(proposeData.task.plan_hash);
-    pass("29. Agent Task Propose 成功產生提案與 hash");
-
-    const execRes = await fetch(`${BASE_URL}/experiments/${exp1Id}/agent/task/execute`, {
-      method: "POST",
-      headers: { ...authHeader(bobToken), "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: "請更新 README.md 加入實驗結論",
-        plan_hash: proposeData.task.plan_hash,
-        confirmed: true,
-      }),
-    });
-    assert.strictEqual(execRes.status, 200);
-    const execData = await execRes.json();
-    assert(execData.commit_sha);
-    pass("30. Agent Task Execute 成功在 scoped path 下提交更新並取得 commit_sha");
 
     // -------------------------------------------------------------
     // [群組 8: Activity Log 稽核日誌與 Shared Repository 關聯]
