@@ -96,7 +96,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   onSuccess,
 }) => {
   const isCourseMode = course?.mode === 'course';
-  const resolvedRepo = experiment.repository || course?.github_repository || '';
+  const resolvedRepo = isCourseMode ? (course?.github_repository || '') : (experiment.repository || '');
   const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'files');
   const [members, setMembers] = useState<ExperimentMembership[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
@@ -133,6 +133,16 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   const currentReportPath = getReportRelativePath(experiment.report_mode, user?.github_id);
 
   const loadReport = useCallback(async () => {
+    if (!currentReportPath) {
+      setReportLoading(false);
+      setReportError(
+        experiment.report_mode === 'separate'
+          ? '此實驗為個別報告模式，需登入具有有效 GitHub ID 之帳號以讀取個人報告'
+          : '無法解析實驗報告路徑'
+      );
+      setReportContent(null);
+      return;
+    }
     setReportLoading(true);
     setReportError(null);
     setReportNotFound(false);
@@ -151,7 +161,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     } finally {
       setReportLoading(false);
     }
-  }, [experiment.id, currentReportPath]);
+  }, [experiment.id, experiment.report_mode, currentReportPath]);
 
   useEffect(() => {
     if (activeTab === 'report') {

@@ -1455,20 +1455,31 @@ async function runFrontendIntegrationTests() {
   // -------------------------------------------------------------
   console.log('\n▶ [群組 10: Course → Lab → Workspace UX 與 Course Mode 前台流程驗證]');
   try {
-    // 10.1 Course Mode Navbar fallback repository (覆蓋條件 1)
+    // 10.1 Course Mode Navbar repository (覆蓋條件 1: course mode -> course.github_repository)
     const courseModeExp = { id: 'exp-course-01', experiment_code: 'lab-01', repository: null };
     const courseModeCourse = { id: 'c-01', mode: 'course', github_repository: 'example-org/shared-physics-course' };
     const resolvedCourseRepo = resolveNavbarRepository(courseModeExp, courseModeCourse);
     assert.strictEqual(resolvedCourseRepo, 'example-org/shared-physics-course');
     assert(!resolvedCourseRepo.includes('experiments/'));
-    pass('1. Course Mode 下 Navbar repository 正確 fallback 至 course.github_repository 且不含 scoped path');
+    pass('1. Course Mode 下 Navbar repository 正確使用 course.github_repository 且不含 scoped path');
 
-    // 10.2 Experiment Mode Navbar repository (覆蓋條件 2)
+    // 10.2 Experiment Mode Navbar repository (覆蓋條件 2: experiment mode -> experiment.repository)
     const expModeExp = { id: 'exp-legacy-01', experiment_code: 'lab-01', repository: 'example-org/physics-exp-01' };
     const expModeCourse = { id: 'c-02', mode: 'experiment', github_repository: null };
     const resolvedExpRepo = resolveNavbarRepository(expModeExp, expModeCourse);
     assert.strictEqual(resolvedExpRepo, 'example-org/physics-exp-01');
-    pass('2. Experiment Mode 下 Navbar repository 正確使用 experiment.repository');
+
+    // 覆蓋條件 3: experiment mode + experiment.repository 缺失 -> 不會偷偷使用 course.github_repository
+    const missingRepoExp = { id: 'exp-missing-01', experiment_code: 'lab-01', repository: null };
+    const trappedCourse = { id: 'c-03', mode: 'experiment', github_repository: 'example-org/course-repo-should-not-leak' };
+    const resolvedMissing = resolveNavbarRepository(missingRepoExp, trappedCourse);
+    assert.strictEqual(resolvedMissing, null, 'experiment mode 下 repository 缺失嚴禁意外使用 course repository');
+
+    // 覆蓋條件 4: legacy course mode 缺失 (undefined/null) -> 預設 experiment mode 處理且不洩漏
+    const legacyCourseUndefinedMode = { id: 'c-04', github_repository: 'example-org/legacy-repo' };
+    assert.strictEqual(resolveNavbarRepository(missingRepoExp, legacyCourseUndefinedMode), null);
+    assert.strictEqual(resolveNavbarRepository(expModeExp, legacyCourseUndefinedMode), 'example-org/physics-exp-01');
+    pass('2. Experiment Mode 下 Navbar repository 正確使用 experiment.repository，且缺失時不意外 fallback 至 course.github_repository');
 
     // 重新建立已登入之教師 Session（Group 7 曾測試登出流程）
     const activeTeacherCookie = createTestSession('99999', 'teacherLin', '林老師');
@@ -1580,8 +1591,9 @@ async function runFrontendIntegrationTests() {
     assert.strictEqual(getReportRelativePath('shared', '20001'), 'report/report.md');
     assert.strictEqual(getReportRelativePath('shared'), 'report/report.md');
     assert.strictEqual(getReportRelativePath('separate', '20001'), 'report/report-20001.md');
-    assert.strictEqual(getReportRelativePath('separate', null), 'report/report.md');
-    pass('9. getReportRelativePath 依 shared/separate 模式與登入者 GitHub ID 正確動態解析報告路徑');
+    assert.strictEqual(getReportRelativePath('separate', null), null);
+    assert.strictEqual(getReportRelativePath('separate', ''), null);
+    pass('9. getReportRelativePath 依 shared/separate 模式與登入者 GitHub ID 正確動態解析報告路徑 (separate 無 ID 嚴格回傳 null)');
 
     // 10.10 Separate Report 模式：學生成功讀取自身個人報告 (200 OK)
     await apiRequest(`/experiments/${expId}`, {

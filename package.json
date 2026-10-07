@@ -8,6 +8,8 @@
     "create-lab": "node scripts/create-lab.mjs",
     "sync-skill": "node scripts/sync-skill.mjs",
     "validate": "node scripts/validate-repo.mjs",
+    "test": "node scripts/verify-workspace.mjs && node scripts/verify-workspace-api.mjs",
+    "test:all": "node scripts/verify-workspace.mjs && node scripts/verify-workspace-api.mjs && node scripts/verify-permissions.mjs && node scripts/verify-auth-session.mjs && node scripts/verify-management.mjs && node scripts/verify-course-mode.mjs && node scripts/verify-frontend.mjs",
     "test:activity": "node scripts/verify-activity-log.mjs",
     "test:auth": "node scripts/verify-auth-session.mjs",
     "test:permissions": "node scripts/verify-permissions.mjs",

@@ -52,6 +52,14 @@ export interface WorkspaceFileContent {
   encoding: 'utf-8' | 'base64';
 }
 
+export interface WorkspaceBinaryFileContent {
+  path: string;
+  data: Uint8Array;
+  sha?: string;
+  size: number;
+  contentType: string;
+}
+
 export interface WorkspaceWriteResult {
   success: boolean;
   path: string;
@@ -193,9 +201,40 @@ export function base64ToString(b64: string): string {
   return decoder.decode(bytes);
 }
 
-function isImagePath(path: string): boolean {
+export function isImagePath(path: string): boolean {
   const lower = path.toLowerCase();
   return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') || lower.endsWith('.webp');
+}
+
+export function getContentTypeFromPath(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  switch (ext) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'png':
+      return 'image/png';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    case 'svg':
+      // 安全防護：SVG 可內嵌 JavaScript，為避免 XSS 攻擊，嚴禁以 image/svg+xml 可執行/inline MIME 直接 serve
+      return 'application/octet-stream';
+    case 'txt':
+    case 'log':
+      return 'text/plain; charset=utf-8';
+    case 'md':
+      return 'text/markdown; charset=utf-8';
+    case 'csv':
+      return 'text/csv; charset=utf-8';
+    case 'json':
+      return 'application/json; charset=utf-8';
+    case 'pdf':
+      return 'application/pdf';
+    default:
+      return 'application/octet-stream';
+  }
 }
 
 /**
@@ -577,11 +616,28 @@ export async function readFile(
     throw new WorkspaceError(400, `Path '${normPath}' is a directory, not a file`);
   }
 
-  // 大檔案限制檢測 (GitHub Contents API 上限約 1MB)
-  if (data.size > 1048576 || (!data.content && data.size > 0)) {
+  // 大檔案限制檢測 (GitHub Contents API 上限約 1MB，超過 1MB 時無法安全取得文字內容)
+  if (data.size > 1048576) {
     throw new WorkspaceError(
       413,
-      `File '${normPath}' is too large for Contents API (${data.size} bytes). Large file strategy required.`
+      `File '${normPath}' is too large for Contents API (${data.size} bytes, exceeds 1MB limit). Use raw/binary endpoint to access large files.`
+    );
+  }
+
+  // 若檔案小於 1MB 卻沒有 content 欄位，且非 0 byte 空檔案，代表 GitHub API 回應結構異常
+  if (data.content === null || data.content === undefined) {
+    if (data.size === 0) {
+      return {
+        path: normPath,
+        content: '',
+        sha: data.sha || '',
+        size: 0,
+        encoding: 'utf-8',
+      };
+    }
+    throw new WorkspaceError(
+      502,
+      `GitHub Contents API returned no content for file '${normPath}' (${data.size} bytes). Upstream payload invalid.`
     );
   }
 
@@ -605,6 +661,100 @@ export async function readFile(
     sha: data.sha,
     size: data.size || 0,
     encoding: 'utf-8',
+  };
+}
+
+/**
+ * 3b. 讀取單一二進位/原始檔案內容 (支援圖片、大檔、素材等二進位資源，透過 GitHub App installation token 鑑權)
+ */
+export async function readBinaryFile(
+  env: any,
+  experimentId: string,
+  filePath: string,
+  sessionUser?: WorkspaceSessionUser | null,
+  fetchFn: typeof fetch = fetch
+): Promise<WorkspaceBinaryFileContent> {
+  const repoInfo = await getWorkspaceRepository(env, experimentId, sessionUser);
+  const normPath = validateWorkspacePath(filePath, { allowEmpty: false });
+
+  // Separate Report 個人報告隔離防護 (協作者只能存取自己的個人報告)
+  if (repoInfo.report_mode === 'separate' && normPath.startsWith('report/')) {
+    if (sessionUser && sessionUser.github_id) {
+      const isTeacherOrAdmin = sessionUser.role === 'teacher' || sessionUser.role === 'admin' || sessionUser.role === 'assistant';
+      const isSelfReport =
+        normPath === `report/${sessionUser.github_id}.md` ||
+        normPath === `report/report-${sessionUser.github_id}.md` ||
+        normPath.startsWith(`report/${sessionUser.github_id}/`);
+      if (!isTeacherOrAdmin && !isSelfReport) {
+        throw new WorkspaceError(
+          403,
+          'Separate report mode violation: Collaborators can only access their personal report (report/<github_id>.md)'
+        );
+      }
+    }
+  }
+
+  const token = await obtainInstallationToken(env, fetchFn);
+  const targetPath = resolveScopedPath(repoInfo.scopePrefix || '', normPath);
+  const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodeRepoPathForUrl(targetPath)}`;
+
+  const res = await safeFetch(fetchFn, url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github.raw',
+      'User-Agent': 'Lab-Workspace-System/1.0',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+  });
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ message: res.statusText }));
+    if (res.status === 404) {
+      throw new WorkspaceError(404, `File '${normPath}' not found in repository`);
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new WorkspaceError(502, `GitHub App authentication or permission error: ${sanitizeErrorMessage(errBody.message || res.statusText)}`);
+    }
+    throw new WorkspaceError(
+      res.status >= 500 ? 502 : res.status,
+      `GitHub API error (${res.status}): ${sanitizeErrorMessage(errBody.message || res.statusText)}`
+    );
+  }
+
+  let data: Uint8Array;
+  const sha = res.headers.get('etag')?.replace(/["W\/]/g, '') || undefined;
+
+  const buf = await res.arrayBuffer();
+  data = new Uint8Array(buf);
+
+  // 若 GitHub API 在特定情境下（如請求目標為目錄時）回傳了 JSON array 或物件，進行攔截防護
+  if (buf.byteLength < 8192) {
+    try {
+      const text = new TextDecoder('utf-8').decode(data);
+      if (text.startsWith('[') || text.startsWith('{')) {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed) || parsed.type === 'dir') {
+          throw new WorkspaceError(400, `Path '${normPath}' is a directory, not a file`);
+        }
+        if (parsed.message && !res.ok) {
+          throw new WorkspaceError(502, `GitHub API error: ${sanitizeErrorMessage(parsed.message)}`);
+        }
+      }
+    } catch (parseErr) {
+      if (parseErr instanceof WorkspaceError) {
+        throw parseErr;
+      }
+      // 非 JSON 格式，正常二進位資料
+    }
+  }
+
+  return {
+    path: normPath,
+    data,
+    sha: sha || '',
+    size: data.byteLength,
+    contentType: getContentTypeFromPath(normPath),
   };
 }
 
@@ -826,8 +976,11 @@ export async function createOrUpdateBinaryFile(
     }
   } else if (data instanceof Uint8Array) {
     base64Content = uint8ArrayToBase64(data);
-  } else if (data instanceof ArrayBuffer) {
-    base64Content = uint8ArrayToBase64(new Uint8Array(data));
+  } else if (
+    data instanceof ArrayBuffer ||
+    (typeof data === 'object' && data !== null && 'byteLength' in data && !(data instanceof Uint8Array))
+  ) {
+    base64Content = uint8ArrayToBase64(new Uint8Array(data as ArrayBuffer));
   } else {
     throw new WorkspaceError(
       400,
@@ -926,6 +1079,11 @@ export function createWorkspaceService(env: any, fetchFn: typeof fetch = fetch) 
       filePath: string,
       sessionUser?: WorkspaceSessionUser | null
     ) => readFile(env, experimentId, filePath, sessionUser, fetchFn),
+    readBinaryFile: (
+      experimentId: string,
+      filePath: string,
+      sessionUser?: WorkspaceSessionUser | null
+    ) => readBinaryFile(env, experimentId, filePath, sessionUser, fetchFn),
     createOrUpdateFile: (
       experimentId: string,
       filePath: string,
@@ -945,6 +1103,42 @@ export function createWorkspaceService(env: any, fetchFn: typeof fetch = fetch) 
         fetchFn
       ),
     createOrUpdateBinaryFile: (
+      experimentId: string,
+      filePath: string,
+      data: Uint8Array | ArrayBuffer | string,
+      message: string,
+      sessionUser?: WorkspaceSessionUser | null,
+      options?: WorkspaceServiceOptions
+    ) =>
+      createOrUpdateBinaryFile(
+        env,
+        experimentId,
+        filePath,
+        data,
+        message,
+        sessionUser,
+        options,
+        fetchFn
+      ),
+    uploadRaw: (
+      experimentId: string,
+      filePath: string,
+      data: Uint8Array | ArrayBuffer | string,
+      message: string,
+      sessionUser?: WorkspaceSessionUser | null,
+      options?: WorkspaceServiceOptions
+    ) =>
+      createOrUpdateBinaryFile(
+        env,
+        experimentId,
+        filePath,
+        data,
+        message,
+        sessionUser,
+        { ...options, allowRawSanctuary: true },
+        fetchFn
+      ),
+    uploadPhoto: (
       experimentId: string,
       filePath: string,
       data: Uint8Array | ArrayBuffer | string,

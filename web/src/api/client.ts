@@ -344,6 +344,24 @@ export const api = {
         `/api/experiments/${encodeURIComponent(expId)}/workspace/file?path=${encodeURIComponent(path)}`
       );
     },
+    readBinaryFile: async (expId: string, path: string): Promise<Blob> => {
+      const res = await fetch(
+        `/api/experiments/${encodeURIComponent(expId)}/workspace/file?path=${encodeURIComponent(path)}&raw=true`,
+        { credentials: 'include' }
+      );
+      if (!res.ok) {
+        let errorMsg = `HTTP ${res.status} ${res.statusText}`;
+        try {
+          const data = await res.json();
+          if (data && data.error) errorMsg = data.error;
+        } catch {}
+        throw new ApiError(errorMsg, res.status);
+      }
+      return await res.blob();
+    },
+    getRawFileUrl: (expId: string, path: string): string => {
+      return `/api/experiments/${encodeURIComponent(expId)}/workspace/file?path=${encodeURIComponent(path)}&raw=true`;
+    },
     saveFile: async (
       expId: string,
       data: {

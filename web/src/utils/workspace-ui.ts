@@ -10,10 +10,16 @@ export function resolveNavbarRepository(
   currentExperiment: Experiment | null,
   currentCourse: Course | null
 ): string | null {
-  if (currentExperiment) {
-    return currentExperiment.repository || currentCourse?.github_repository || null;
+  const mode = currentCourse?.mode || 'experiment';
+  if (mode === 'course') {
+    // 課程模式：一律使用 course.github_repository，個別實驗不應獨立綁定 repo
+    return currentCourse?.github_repository || null;
   }
-  return currentCourse?.github_repository || null;
+  if (currentExperiment) {
+    // 實驗模式：必須優先使用 experiment.repository；若 experiment.repository 缺失，嚴禁意外 fallback 至 course.github_repository
+    return currentExperiment.repository || null;
+  }
+  return null;
 }
 
 /**
@@ -45,14 +51,19 @@ export function shouldShowStandaloneProvisioningWarning(
 /**
  * 格式化實驗報告路徑 (Client 端維持乾淨相對路徑，絕不混入後端 scoped path)
  * - shared 模式: 固定使用 report/report.md
- * - separate 模式: 使用目前登入者的個人報告 report/report-<github_id>.md
+ * - separate 模式: 必須要求有效的 GitHub ID，產生 report/report-<github_id>.md
+ *   若 separate 模式缺失有效的 github_id，回傳 null（避免靜默 fallback 到 shared report 掩蓋登入或身分遺失錯誤）
  */
 export function getReportRelativePath(
   reportMode?: 'shared' | 'separate' | string,
   userGithubId?: string | number | null
-): string {
-  if (reportMode === 'separate' && userGithubId) {
-    return `report/report-${userGithubId}.md`;
+): string | null {
+  if (reportMode === 'separate') {
+    if (userGithubId !== undefined && userGithubId !== null && String(userGithubId).trim() !== '') {
+      return `report/report-${String(userGithubId).trim()}.md`;
+    }
+    // separate 模式但缺少有效 github_id：明確回傳 null，不可靜默 fallback 至 report/report.md
+    return null;
   }
   return 'report/report.md';
 }

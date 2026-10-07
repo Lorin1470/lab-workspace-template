@@ -20,6 +20,7 @@ import {
   getWorkspaceRepository,
   listFiles,
   readFile,
+  readBinaryFile,
   createOrUpdateFile,
   createOrUpdateBinaryFile,
   validateWorkspacePath,
@@ -231,6 +232,17 @@ class MockGitHubApi {
         // 檢查是否為檔案
         if (this.files.has(targetPath)) {
           const file = this.files.get(targetPath);
+          const acceptHeader = options.headers?.Accept || options.headers?.accept || '';
+          if (acceptHeader.includes('application/vnd.github.raw')) {
+            const rawBuffer = Buffer.from(file.contentBase64, 'base64');
+            return new Response(rawBuffer, {
+              status: 200,
+              headers: {
+                'content-type': file.name.endsWith('.jpg') ? 'image/jpeg' : file.name.endsWith('.png') ? 'image/png' : 'application/octet-stream',
+                etag: `"${file.sha}"`,
+              },
+            });
+          }
           return new Response(
             JSON.stringify({
               name: file.name,
@@ -525,10 +537,28 @@ async function runTests() {
     passed++;
   }
 
-  // 3.4 大檔案檢測 (超過 1MB 阻絕)
+  // 3.4 大檔案檢測 (超過 1MB 阻絕，含文字與圖片)
   {
     const bigFileFetch = async (url, opts) => {
-      if (String(url).includes('/contents/big.iso')) {
+      const urlStr = String(url);
+      const headers = opts?.headers || {};
+      const accept = headers.Accept || headers.accept || '';
+
+      if (urlStr.includes('/contents/empty.txt')) {
+        return new Response(
+          JSON.stringify({
+            name: 'empty.txt',
+            path: 'empty.txt',
+            size: 0,
+            content: '',
+            encoding: 'base64',
+            sha: 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391',
+          }),
+          { status: 200 }
+        );
+      }
+
+      if (urlStr.includes('/contents/big.iso')) {
         return new Response(
           JSON.stringify({
             name: 'big.iso',
@@ -539,18 +569,64 @@ async function runTests() {
           { status: 200 }
         );
       }
+
+      if (urlStr.includes('/contents/photos/huge_diagram.png')) {
+        if (accept.includes('application/vnd.github.raw')) {
+          return new Response(new Uint8Array(2 * 1024 * 1024), {
+            status: 200,
+            headers: { 'content-type': 'image/png', etag: '"mock_huge_img_etag"' },
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            name: 'huge_diagram.png',
+            path: 'photos/huge_diagram.png',
+            size: 2 * 1024 * 1024, // 2MB
+            content: null,
+            sha: 'mock_huge_img_sha',
+          }),
+          { status: 200 }
+        );
+      }
+
       return mockGh.fetch(url, opts);
     };
 
+    // 1. 0-byte file 正常讀取
+    const emptyFile = await readFile(env, 'exp-01', 'empty.txt', { github_id: '101' }, bigFileFetch);
+    assert.strictEqual(emptyFile.size, 0);
+    assert.strictEqual(emptyFile.content, '');
+    console.log('  ✅ [PASS] 0-byte 檔案正常讀取並回傳空字串');
+    passed++;
+
+    // 2. > 1MB text 檔案拋出 413
     try {
       await readFile(env, 'exp-01', 'big.iso', { github_id: '101' }, bigFileFetch);
       assert.fail('應拋出 413');
     } catch (err) {
       assert.strictEqual(err.status, 413);
       assert.ok(err.message.includes('too large'));
-      console.log('  ✅ [PASS] 超過 1MB 之大檔案正確攔截並回傳 413');
+      console.log('  ✅ [PASS] 超過 1MB 之大檔案 (big.iso) 正確攔截並回傳 413');
       passed++;
     }
+
+    // 3. > 1MB 圖片檔案在 readFile() 亦拋出 413 (不假裝 200 回傳空內容)
+    try {
+      await readFile(env, 'exp-01', 'photos/huge_diagram.png', { github_id: '101' }, bigFileFetch);
+      assert.fail('應拋出 413');
+    } catch (err) {
+      assert.strictEqual(err.status, 413);
+      assert.ok(err.message.includes('too large'));
+      console.log('  ✅ [PASS] 超過 1MB 之圖片檔案在 readFile() 嚴格回傳 413，不假裝空內容成功');
+      passed++;
+    }
+
+    // 4. > 1MB 圖片檔案可透過 readBinaryFile() 正常讀取完整串流
+    const hugeImgBinary = await readBinaryFile(env, 'exp-01', 'photos/huge_diagram.png', { github_id: '101' }, bigFileFetch);
+    assert.strictEqual(hugeImgBinary.size, 2 * 1024 * 1024);
+    assert.strictEqual(hugeImgBinary.contentType, 'image/png');
+    console.log('  ✅ [PASS] 超過 1MB 之圖片檔案可透過 readBinaryFile() 正常取得二進位串流');
+    passed++;
   }
 
   // ==========================================
@@ -875,23 +951,42 @@ async function runTests() {
   }
 
   // ==========================================
-  // 群組 9: createWorkspaceService 服務工廠實例化
+  // 群組 9: readBinaryFile 二進位讀取與 createWorkspaceService 服務工廠實例化
   // ==========================================
-  console.log('\n▶ [群組 9: createWorkspaceService 工廠實例化]');
+  console.log('\n▶ [群組 9: readBinaryFile 與 createWorkspaceService 工廠實例化]');
 
+  // 9.1 readBinaryFile 讀取圖片檔案
+  {
+    const bin = await readBinaryFile(env, 'exp-01', 'photos/photo1.jpg', { github_id: '101' }, mockGh.fetch);
+    assert.strictEqual(bin.path, 'photos/photo1.jpg');
+    assert.strictEqual(bin.contentType, 'image/jpeg');
+    assert.ok(bin.data instanceof Uint8Array);
+    assert.ok(bin.data.length > 0);
+    assert.ok(bin.sha.length > 0);
+    console.log('  ✅ [PASS] readBinaryFile 正確讀取二進位圖片與 MIME 類型');
+    passed++;
+  }
+
+  // 9.2 createWorkspaceService 擴充方法驗證
   {
     const ws = createWorkspaceService(env, mockGh.fetch);
     assert.strictEqual(typeof ws.getWorkspaceRepository, 'function');
     assert.strictEqual(typeof ws.listFiles, 'function');
     assert.strictEqual(typeof ws.readFile, 'function');
+    assert.strictEqual(typeof ws.readBinaryFile, 'function');
     assert.strictEqual(typeof ws.createOrUpdateFile, 'function');
     assert.strictEqual(typeof ws.createOrUpdateBinaryFile, 'function');
+    assert.strictEqual(typeof ws.uploadRaw, 'function');
+    assert.strictEqual(typeof ws.uploadPhoto, 'function');
 
     const repo = await ws.getWorkspaceRepository('exp-01', { github_id: '101' });
     assert.strictEqual(repo.full_name, 'example-org/ee201-lab-01');
 
     const tree = await ws.listFiles('exp-01', '', { github_id: '101' });
     assert.ok(tree.length > 0);
+
+    const bin = await ws.readBinaryFile('exp-01', 'photos/photo1.jpg', { github_id: '101' });
+    assert.strictEqual(bin.contentType, 'image/jpeg');
     console.log('  ✅ [PASS] createWorkspaceService 服務工廠實例化與鏈結調用完全符合規範');
     passed++;
   }

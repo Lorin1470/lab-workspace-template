@@ -236,14 +236,14 @@ export interface WorkspaceFileItem {
 }
 
 export interface WorkspaceFileContent {
-  name: string;
+  name?: string;
   path: string;
   size: number;
   encoding: string;
   content: string;
   content_base64?: string;
   sha: string;
-  type: 'file';
+  type?: 'file';
 }
 
 export interface WorkspaceWriteResponse {

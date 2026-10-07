@@ -237,8 +237,8 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
   onError,
   onSuccess,
 }) => {
-  const repositoryFullName = experiment.repository || course?.github_repository || '';
   const isCourseMode = course?.mode === 'course';
+  const repositoryFullName = isCourseMode ? (course?.github_repository || '') : (experiment.repository || '');
   const getScopedPath = (path: string) =>
     isCourseMode ? `experiments/${experiment.experiment_code}/${path}` : path;
 
@@ -342,18 +342,55 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
         setCommitMessage('更新實驗筆記');
       }
     } catch (err: any) {
-      setCurrentFile(null);
-      onError(formatWorkspaceError(err, 'general'));
+      const status = err?.status || (err instanceof ApiError ? err.status : 0);
+      if (status === 413 && isImagePath(filePath)) {
+        // >1MB 圖片：Contents API 回傳 413，前端仍能透過 authenticated raw endpoint 正常預覽
+        setCurrentFile({
+          path: filePath,
+          size: 0,
+          encoding: 'utf-8',
+          content: '',
+          sha: '',
+        });
+        setEditContent('');
+        setEditorMode('view');
+      } else {
+        setCurrentFile(null);
+        onError(formatWorkspaceError(err, 'general'));
+      }
     } finally {
       setFileLoading(false);
     }
   };
 
   // 4. 重新整理整個 Workspace
-  const handleRefreshWorkspace = async () => {
-    setFolderChildren({});
-    setExpandedFolders(new Set());
+  const handleRefreshWorkspace = async (targetToExpand?: string) => {
     await loadRootTree();
+
+    const foldersToReload = new Set(expandedFolders);
+    if (targetToExpand) {
+      const parts = targetToExpand.split('/');
+      if (parts.length > 1) {
+        foldersToReload.add(parts.slice(0, -1).join('/'));
+      }
+    }
+
+    if (foldersToReload.size > 0) {
+      setExpandedFolders(new Set(foldersToReload));
+      const newFolderChildren: Record<string, WorkspaceFileItem[]> = {};
+      await Promise.all(
+        Array.from(foldersToReload).map(async (folder) => {
+          try {
+            const children = await api.workspace.listFiles(experiment.id, folder);
+            newFolderChildren[folder] = children;
+          } catch {
+            // ignore
+          }
+        })
+      );
+      setFolderChildren((prev) => ({ ...prev, ...newFolderChildren }));
+    }
+
     if (selectedPath) {
       await loadFile(selectedPath);
     }
@@ -489,8 +526,9 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
       setRawFile(null);
       setRawMessage('');
 
-      // 重新整理檔案樹
-      await handleRefreshWorkspace();
+      // 重新整理檔案樹並自動展開與載入新檔案
+      await handleRefreshWorkspace(res.path);
+      await loadFile(res.path);
     } catch (err: any) {
       const status = err?.status || (err instanceof ApiError ? err.status : 0);
       if (status === 409) {
@@ -543,8 +581,9 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
       setPhotoPreviewUrl(null);
       setPhotoMessage('');
 
-      // 重新整理檔案樹
-      await handleRefreshWorkspace();
+      // 重新整理檔案樹並自動展開與載入新檔案
+      await handleRefreshWorkspace(res.path);
+      await loadFile(res.path);
     } catch (err: any) {
       const status = err?.status || (err instanceof ApiError ? err.status : 0);
       if (status === 413) {
@@ -681,7 +720,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
         {/* 操作工具列 */}
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={handleRefreshWorkspace}
+            onClick={() => handleRefreshWorkspace()}
             disabled={treeLoading}
             className="inline-flex items-center space-x-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
             title="重新取得真實 GitHub Workspace 檔案樹"
@@ -946,12 +985,12 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                         src={
                           currentFile?.content_base64
                             ? `data:${imageMimeType(selectedPath)};base64,${currentFile.content_base64}`
-                            : `https://raw.githubusercontent.com/${repositoryFullName}/main/${getScopedPath(selectedPath)}`
+                            : api.workspace.getRawFileUrl(experiment.id, selectedPath)
                         }
                         alt={selectedPath}
                         className="max-h-80 w-auto object-contain mx-auto rounded"
                         onError={(e) => {
-                          // 私有庫或直連失敗時的安全後備
+                          // 載入失敗時的安全後備
                           (e.currentTarget as HTMLElement).style.display = 'none';
                           const fallbackDiv = document.getElementById(`img-fallback-${selectedPath}`);
                           if (fallbackDiv) fallbackDiv.style.display = 'flex';
@@ -963,9 +1002,9 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                         className="flex flex-col items-center justify-center py-12 px-4 text-center space-y-2"
                       >
                         <ImageIcon className="w-10 h-10 text-slate-400" />
-                        <p className="text-xs font-semibold text-slate-700">圖片二進位檔案</p>
+                        <p className="text-xs font-semibold text-slate-700">圖片載入失敗</p>
                         <p className="text-[11px] text-slate-400 max-w-xs">
-                          私有儲存庫可點擊下方按鈕直接在 GitHub 檢視高解析原圖。
+                          可點擊下方按鈕在 GitHub 檢視高解析原圖。
                         </p>
                       </div>
                     </div>

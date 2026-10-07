@@ -128,6 +128,9 @@ class MockWorkspaceApiD1 {
             const list = this.activityLogs.filter((l) => l.repo_name === repo);
             return { results: list };
           }
+          if (q.includes("FROM experiment_provisionings WHERE experiment_id = ?")) {
+            return { results: [] };
+          }
           return { results: [] };
         },
       }),
@@ -144,11 +147,16 @@ class MockGitHubApi {
 
   setFile(ownerRepo, filePath, content, isDir = false) {
     const key = `${ownerRepo.toLowerCase()}:${filePath}`;
-    const sha = crypto.createHash("sha1").update(content || filePath).digest("hex");
+    const rawBuf = Buffer.isBuffer(content)
+      ? content
+      : content instanceof Uint8Array
+      ? Buffer.from(content)
+      : Buffer.from(content || "", "utf8");
+    const sha = crypto.createHash("sha1").update(rawBuf).digest("hex");
     this.files.set(key, {
-      content: content || "",
+      content: rawBuf,
       sha,
-      size: Buffer.byteLength(content || "", "utf8"),
+      size: rawBuf.length,
       type: isDir ? "dir" : "file",
     });
   }
@@ -255,6 +263,16 @@ class MockGitHubApi {
         const exactFile = this.files.get(directKey);
 
         if (exactFile && exactFile.type === "file") {
+          const acceptHeader = headers.Accept || headers.accept || "";
+          if (acceptHeader.includes("application/vnd.github.raw")) {
+            return new Response(exactFile.content, {
+              status: 200,
+              headers: {
+                "content-type": filePath.endsWith(".png") ? "image/png" : filePath.endsWith(".jpg") ? "image/jpeg" : "application/octet-stream",
+                etag: `"${exactFile.sha}"`,
+              },
+            });
+          }
           return new Response(
             JSON.stringify({
               name: filePath.split("/").pop(),
@@ -296,8 +314,8 @@ class MockGitHubApi {
         }
 
         const isNew = !existing;
-        const decodedContent = Buffer.from(body.content || "", "base64").toString("utf8");
-        const newFileSha = crypto.createHash("sha1").update(decodedContent).digest("hex");
+        const decodedBuffer = Buffer.from(body.content || "", "base64");
+        const newFileSha = crypto.createHash("sha1").update(decodedBuffer).digest("hex");
         this.commitCounter++;
         const newCommitSha = crypto
           .createHash("sha1")
@@ -305,9 +323,9 @@ class MockGitHubApi {
           .digest("hex");
 
         this.files.set(directKey, {
-          content: decodedContent,
+          content: decodedBuffer,
           sha: newFileSha,
-          size: Buffer.byteLength(decodedContent, "utf8"),
+          size: decodedBuffer.length,
           type: "file",
         });
 
@@ -317,7 +335,7 @@ class MockGitHubApi {
               name: filePath.split("/").pop(),
               path: filePath,
               sha: newFileSha,
-              size: Buffer.byteLength(decodedContent, "utf8"),
+              size: decodedBuffer.length,
             },
             commit: {
               sha: newCommitSha,
@@ -510,8 +528,8 @@ async function runAllTests() {
       const response = await onRequest({ request, env, params: {} });
       res.statusCode = response.status;
       response.headers.forEach((v, k) => res.setHeader(k, v));
-      const resBody = await response.text();
-      res.end(resBody);
+      const resArrayBuf = await response.arrayBuffer();
+      res.end(Buffer.from(resArrayBuf));
     } catch (err) {
       console.error("Test server error:", err);
       res.statusCode = 500;
@@ -525,7 +543,13 @@ async function runAllTests() {
     const url = `${BASE_URL}${path.startsWith("/") ? path : "/" + path}`;
     const headers = { ...(options.headers || {}) };
     let body = options.body;
-    if (body && typeof body === "object" && !(body instanceof Buffer) && !(body instanceof Uint8Array)) {
+    if (
+      body &&
+      typeof body === "object" &&
+      !(body instanceof Buffer) &&
+      !(body instanceof Uint8Array) &&
+      !(typeof FormData !== "undefined" && body instanceof FormData)
+    ) {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(body);
     }
@@ -536,6 +560,18 @@ async function runAllTests() {
     };
     const res = await fetch(url, fetchOptions);
     let data = null;
+    let binary = null;
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("image/") || contentType.includes("application/octet-stream") || options.binary) {
+      const arrayBuffer = await res.arrayBuffer();
+      binary = Buffer.from(arrayBuffer);
+      try {
+        data = JSON.parse(binary.toString("utf8"));
+      } catch {
+        data = null;
+      }
+      return { status: res.status, headers: res.headers, data, binary };
+    }
     const text = await res.text();
     try {
       data = JSON.parse(text);
@@ -749,9 +785,20 @@ async function runAllTests() {
     }
 
     // ----------------------------------------------------
-    // 群組 2: Authorization 授權邊界 (測試 17-19)
+    // 群組 2: Authorization 授權邊界 (測試 0, 5-7)
     // ----------------------------------------------------
     console.log("\n▶ [群組 2: Authorization 協作者授權邊界 (403 vs 200)]");
+
+    // 0. Workspace / Provisioning 狀態查詢與綁定驗證
+    {
+      const res = await api("/experiments/exp-01/provision", {
+        headers: { Cookie: aliceCookie },
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.data.success, true);
+      assert.strictEqual(res.data.repository, "TestLabOrg/ee201-lab-01");
+      pass("0. 建立工作區與 GitHub 儲存庫綁定驗證成功 (200 OK)");
+    }
 
     // 5. 非 collaborator -> 403
     {
@@ -978,6 +1025,43 @@ async function runAllTests() {
       pass("20. Raw Data 覆寫企圖遭 409 Conflict 阻擋 (不可竄改原始數據鐵律)");
     }
 
+    // 19b. multipart raw upload -> 成功
+    {
+      const fd = new FormData();
+      const csvBlob = new Blob(["time,val\n0,1.2\n1,2.4\n"], { type: "text/csv" });
+      fd.append("file", csvBlob, "voltage_log.csv");
+      fd.append("message", "upload: multipart raw voltage log");
+
+      const res = await api("/experiments/exp-01/workspace/raw", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: fd,
+      });
+      assert.strictEqual(res.status, 201);
+      assert.strictEqual(res.data.success, true);
+      assert.strictEqual(res.data.action, "raw_uploaded");
+      assert.strictEqual(res.data.path, "raw/voltage_log.csv");
+      assert.ok(res.data.commit_sha && res.data.commit_sha.length === 40);
+      pass("19b. 真正的 multipart/form-data 原始數據上傳成功 (201 Created)");
+    }
+
+    // 20b. duplicate multipart raw upload -> 409
+    {
+      const fd = new FormData();
+      const csvBlob = new Blob(["tampered,values\n"], { type: "text/csv" });
+      fd.append("file", csvBlob, "voltage_log.csv");
+      fd.append("message", "tamper multipart raw");
+
+      const res = await api("/experiments/exp-01/workspace/raw", {
+        method: "POST",
+        headers: { Cookie: bobCookie },
+        body: fd,
+      });
+      assert.strictEqual(res.status, 409);
+      assert.ok(res.data.error.includes("cannot be overwritten") || res.data.error.includes("already exists"));
+      pass("20b. 真正的 multipart/form-data 覆寫 raw 同名檔案遭 409 Conflict 阻絕");
+    }
+
     // 21. raw traversal -> 400
     {
       const res = await api("/experiments/exp-01/workspace/raw", {
@@ -1075,6 +1159,24 @@ async function runAllTests() {
       pass("25. PNG 圖片順利上傳且檔名自動正規化至 photos/ (201 Created)");
     }
 
+    // 25b. multipart photo upload -> 成功
+    {
+      const fd = new FormData();
+      const imgBlob = new Blob([Buffer.from("mock_png_binary_multipart_bytes")], { type: "image/png" });
+      fd.append("file", imgBlob, "scope_output.png");
+      fd.append("message", "photo: multipart oscilloscope output");
+
+      const res = await api("/experiments/exp-01/workspace/photos", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: fd,
+      });
+      assert.strictEqual(res.status, 201);
+      assert.strictEqual(res.data.path, "photos/scope_output.png");
+      assert.ok(res.data.commit_sha && res.data.commit_sha.length === 40);
+      pass("25b. 真正的 multipart/form-data 照片上傳成功 (201 Created)");
+    }
+
     // 26. 非圖片 MIME -> 400
     {
       const res = await api("/experiments/exp-01/workspace/photos", {
@@ -1107,6 +1209,96 @@ async function runAllTests() {
       assert.strictEqual(res.status, 413);
       assert.ok(res.data.error.includes("5MB limit"));
       pass("27. 超過 5MB 之圖片上傳遭 413 Payload Too Large 阻絕");
+    }
+
+    // 27b. 建立真實非 ASCII 二進位 byte sequence 並進行 byte-for-byte 正確性檢驗
+    const realBinarySequence = Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+      0x01, 0x01, 0x00, 0x60, 0x00, 0x60, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43,
+      0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08, 0x07, 0x07, 0x07, 0x09,
+      0x09, 0x08, 0x0a, 0x0c, 0x14, 0x0d, 0x0c, 0x0b, 0x0b, 0x0c, 0x19, 0x12,
+      0x13, 0x0f, 0x14, 0x1d, 0x1a, 0x1f, 0x1e, 0x1d, 0x1a, 0x1c, 0x1c, 0x20,
+      0xff, 0xd9 // EOI
+    ]);
+
+    // 27b-1. JPEG multipart 上傳並驗證立即在 listFiles 中可見
+    {
+      const fd = new FormData();
+      const jpegBlob = new Blob([realBinarySequence], { type: "image/jpeg" });
+      fd.append("file", jpegBlob, "real_device_capture.jpg");
+      fd.append("message", "photo: real binary multipart jpeg");
+
+      const uploadRes = await api("/experiments/exp-01/workspace/photos", {
+        method: "POST",
+        headers: { Cookie: aliceCookie },
+        body: fd,
+      });
+      assert.strictEqual(uploadRes.status, 201);
+      assert.strictEqual(uploadRes.data.path, "photos/real_device_capture.jpg");
+
+      // upload 後 listFiles 可以立即看到檔案
+      const listRes = await api("/experiments/exp-01/workspace/files?path=photos", {
+        headers: { Cookie: aliceCookie },
+      });
+      assert.strictEqual(listRes.status, 200);
+      const fileFound = listRes.data.items.some((i) => i.name === "real_device_capture.jpg");
+      assert.strictEqual(fileFound, true, "upload 後 listFiles 必須立即看見該檔案");
+      pass("27b-1. JPEG multipart 上傳成功且 upload 後 listFiles 可以立即看見檔案");
+    }
+
+    // 27b-2. binary/image read via authenticated raw endpoint 驗證 byte-for-byte、Headers 完整性
+    {
+      const res = await api("/experiments/exp-01/workspace/file?path=photos/real_device_capture.jpg&raw=true", {
+        method: "GET",
+        headers: { Cookie: aliceCookie },
+        binary: true,
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.headers.get("content-type"), "image/jpeg");
+      assert.strictEqual(res.headers.get("content-length"), String(realBinarySequence.length));
+      assert.strictEqual(res.headers.get("cache-control"), "private, no-cache");
+      assert.strictEqual(res.headers.get("x-content-type-options"), "nosniff");
+      assert.ok(res.binary, "應回傳二進位 buffer");
+      assert.strictEqual(res.binary.length, realBinarySequence.length, "二進位大小應與原始上傳 byte-for-byte 完全一致");
+      assert.ok(
+        res.binary.equals(realBinarySequence),
+        "二進位 byte sequence 必須 byte-for-byte 完全吻合（未遭 UTF-8 或 Base64 破壞）"
+      );
+      pass("27b-2. 透過 Authenticated Workspace API 讀取二進位 byte-for-byte 吻合且 Headers 完整");
+    }
+
+    // 27c. 未登入或非協作者請求 ?raw=true 嚴格拒絕 (401 / 403)
+    {
+      const unauthRes = await api("/experiments/exp-01/workspace/file?path=photos/real_device_capture.jpg&raw=true");
+      assert.strictEqual(unauthRes.status, 401, "未登入讀取 ?raw=true 必須回傳 401");
+
+      const forbiddenRes = await api("/experiments/exp-01/workspace/file?path=photos/real_device_capture.jpg&raw=true", {
+        headers: { Cookie: eveCookie },
+      });
+      assert.strictEqual(forbiddenRes.status, 403, "非協作者讀取 ?raw=true 必須回傳 403");
+
+      // Separate Report 模式下讀取他人檔案帶 ?raw=true 必須回傳 403
+      const separateRawEveRes = await api("/experiments/exp-02/workspace/file?path=report/1001.md&raw=true", {
+        headers: { Cookie: bobCookie },
+      });
+      assert.strictEqual(separateRawEveRes.status, 403, "Separate 模式下讀取他人 report 帶 ?raw=true 必須回傳 403");
+      pass("27c. GET /workspace/file?raw=true 與普通端點使用完全相同之 401/403/Separate 權限邊界");
+    }
+
+    // 27d. SVG raw serving 安全性驗證：嚴禁以可執行之 image/svg+xml 直接 serve，必須為 application/octet-stream
+    {
+      mockGh.setFile("TestLabOrg/ee201-lab-01", "analysis/vector_chart.svg", "<svg><script>alert(1)</script></svg>");
+      const svgRes = await api("/experiments/exp-01/workspace/file?path=analysis/vector_chart.svg&raw=true", {
+        headers: { Cookie: aliceCookie },
+      });
+      assert.strictEqual(svgRes.status, 200);
+      assert.strictEqual(
+        svgRes.headers.get("content-type"),
+        "application/octet-stream",
+        "SVG 檔案嚴禁以 image/svg+xml 回傳，必須是 application/octet-stream"
+      );
+      assert.strictEqual(svgRes.headers.get("x-content-type-options"), "nosniff");
+      pass("27d. SVG raw 讀取確認回傳 application/octet-stream 與 nosniff，成功阻絕 inline SVG XSS 風險");
     }
 
     // ----------------------------------------------------

@@ -11,6 +11,7 @@ import {
   getWorkspaceRepository,
   listFiles,
   readFile,
+  readBinaryFile,
   createOrUpdateFile,
   createOrUpdateBinaryFile,
   validateWorkspacePath,
@@ -2555,8 +2556,23 @@ export const onRequest = async (context: any) => {
         if (!filePath) {
           return new Response(JSON.stringify({ error: 'Missing required query parameter: path' }), { status: 400, headers });
         }
+        const isRaw = url.searchParams.get('raw') === 'true' || url.searchParams.get('raw') === '1';
         try {
           const userWithRole = sessionUser ? { ...sessionUser, role: perm.role } : sessionUser;
+          if (isRaw) {
+            const binData = await readBinaryFile(env, expId, filePath, userWithRole, env.FETCH || fetch);
+            return new Response(binData.data, {
+              status: 200,
+              headers: {
+                ...headers,
+                'Content-Type': binData.contentType,
+                'Content-Length': String(binData.size),
+                'Cache-Control': 'private, no-cache',
+                'X-Content-Type-Options': 'nosniff',
+                ...(binData.sha ? { ETag: `"${binData.sha}"` } : {}),
+              },
+            });
+          }
           const fileData = await readFile(env, expId, filePath, userWithRole, env.FETCH || fetch);
           return new Response(JSON.stringify(fileData), { status: 200, headers });
         } catch (err: any) {
@@ -2927,7 +2943,7 @@ export const onRequest = async (context: any) => {
       }
 
       // 推導或驗證 MIME
-      if (!mimeType) {
+      if (!mimeType || mimeType.toLowerCase() === 'application/octet-stream') {
         if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
         else if (ext === 'png') mimeType = 'image/png';
         else if (ext === 'webp') mimeType = 'image/webp';
