@@ -232,6 +232,17 @@ export async function removeStudentCollaborator(
 }
 
 /**
+ * 顯式撤銷 GitHub 協作者權限 (Revoke)
+ */
+export async function revokeStudentCollaborator(
+  env: any,
+  params: CollaboratorSyncParams,
+  fetchFn: typeof fetch = fetch
+): Promise<SyncResult> {
+  return removeStudentCollaborator(env, params, fetchFn);
+}
+
+/**
  * 內部輔助：更新 D1 membership 的同步狀態欄位
  */
 async function updateMembershipSyncStatus(

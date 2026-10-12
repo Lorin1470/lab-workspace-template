@@ -261,3 +261,43 @@ export interface WorkspaceWriteResponse {
   commit_sha: string;
   content_sha: string;
 }
+
+// ==========================================
+// 儲存庫管理 (Repository Management) 型別
+// ==========================================
+
+export interface RemoteRepositoryInfo {
+  owner: string;
+  name: string;
+  full_name: string;
+  html_url: string;
+  private: boolean;
+  default_branch: string;
+  description?: string | null;
+  permissions?: {
+    admin?: boolean;
+    push?: boolean;
+    pull?: boolean;
+  };
+  updated_at?: string;
+}
+
+export interface RepositoryDetailsResponse {
+  success: boolean;
+  bound: boolean;
+  repository: string | null;
+  mode?: CourseMode;
+  course_id?: string;
+  message?: string;
+  remote?: RemoteRepositoryInfo | null;
+  remote_exists?: boolean;
+  remote_error?: string | null;
+}
+
+export interface BindRepositoryRequest {
+  repository?: string;
+  name?: string;
+  description?: string;
+  private?: boolean;
+  auto_provision?: boolean;
+}

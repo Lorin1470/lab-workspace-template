@@ -252,15 +252,28 @@ export async function getInstallationToken(
   };
 }
 
+export interface ProvisionOptions {
+  description?: string;
+  private?: boolean;
+}
+
 /**
  * 執行 Repository 建立與範本初始化核心服務
  */
 export async function provisionRepository(
   env: any,
   repository: string,
-  description?: string,
+  descriptionOrOptions?: string | ProvisionOptions,
   fetchFn: typeof fetch = fetch
 ): Promise<ProvisionResult> {
+  const description =
+    typeof descriptionOrOptions === 'object' && descriptionOrOptions !== null
+      ? descriptionOrOptions.description
+      : descriptionOrOptions;
+  const isPrivate =
+    typeof descriptionOrOptions === 'object' && descriptionOrOptions !== null
+      ? descriptionOrOptions.private !== false
+      : true;
   // 1. 嚴格驗證 repository 格式 (owner/name)
   const match = repository.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
   if (!match) {
@@ -336,7 +349,7 @@ export async function provisionRepository(
         owner,
         name: repoName,
         description: description || `Lab workspace for ${owner}/${repoName}`,
-        private: true,
+        private: isPrivate,
         include_all_branches: false,
       }),
     });
@@ -397,4 +410,157 @@ export async function provisionRepository(
       default_branch: verifyData.default_branch || 'main',
     },
   };
+}
+
+/**
+ * 查詢遠端 GitHub 儲存庫詳細狀態
+ */
+export async function getRemoteRepositoryDetails(
+  env: any,
+  repository: string,
+  fetchFn: typeof fetch = fetch
+): Promise<{
+  success: boolean;
+  exists: boolean;
+  repository?: {
+    owner: string;
+    name: string;
+    full_name: string;
+    html_url: string;
+    private: boolean;
+    default_branch: string;
+    description: string | null;
+    permissions?: any;
+    updated_at?: string;
+  };
+  error?: string;
+}> {
+  const match = repository.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
+  if (!match) {
+    return { success: false, exists: false, error: '無效的儲存庫格式，必須為 owner/name' };
+  }
+  const [_, owner, repoName] = match;
+
+  let token: string;
+  try {
+    const tokenInfo = await getInstallationToken(env, fetchFn);
+    token = tokenInfo.token;
+  } catch (err: any) {
+    return { success: false, exists: false, error: sanitizeErrorMessage(err?.message || '無法取得 GitHub App Token') };
+  }
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'Lab-Workspace-System/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  try {
+    const res = await fetchFn(`https://api.github.com/repos/${owner}/${repoName}`, { headers });
+    if (res.status === 404) {
+      return { success: true, exists: false, error: 'GitHub 遠端儲存庫不存在 (HTTP 404)' };
+    }
+    if (!res.ok) {
+      const errBody: any = await res.json().catch(() => ({}));
+      return {
+        success: false,
+        exists: false,
+        error: sanitizeErrorMessage(errBody.message || res.statusText || `HTTP ${res.status}`),
+      };
+    }
+    const data: any = await res.json();
+    return {
+      success: true,
+      exists: true,
+      repository: {
+        owner: data.owner?.login || owner,
+        name: data.name || repoName,
+        full_name: data.full_name || `${owner}/${repoName}`,
+        html_url: data.html_url || `https://github.com/${owner}/${repoName}`,
+        private: !!data.private,
+        default_branch: data.default_branch || 'main',
+        description: data.description || null,
+        permissions: data.permissions,
+        updated_at: data.updated_at,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, exists: false, error: sanitizeErrorMessage(err?.message || '網路通訊失敗') };
+  }
+}
+
+/**
+ * 真正刪除遠端 GitHub 儲存庫 (需要 GitHub App 具備 Administration: write 權限)
+ */
+export async function deleteRemoteRepository(
+  env: any,
+  repository: string,
+  fetchFn: typeof fetch = fetch
+): Promise<{
+  success: boolean;
+  already_deleted?: boolean;
+  error?: string;
+}> {
+  const match = repository.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
+  if (!match) {
+    return { success: false, error: '無效的儲存庫格式，必須為 owner/name' };
+  }
+  const [_, owner, repoName] = match;
+
+  let token: string;
+  let targetOwner: string | undefined;
+  try {
+    const tokenInfo = await getInstallationToken(env, fetchFn);
+    token = tokenInfo.token;
+    targetOwner = tokenInfo.target_owner;
+  } catch (err: any) {
+    return { success: false, error: sanitizeErrorMessage(err?.message || '無法取得 GitHub App Token') };
+  }
+
+  // 驗證 Owner 權限範圍
+  if (targetOwner && owner.toLowerCase() !== targetOwner.toLowerCase()) {
+    return {
+      success: false,
+      error: `儲存庫擁有者 '${owner}' 不在目前 GitHub App 安裝授權範圍內 (授權目標: '${targetOwner}')`,
+    };
+  }
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'Lab-Workspace-System/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  try {
+    const res = await fetchFn(`https://api.github.com/repos/${owner}/${repoName}`, {
+      method: 'DELETE',
+      headers,
+    });
+
+    if (res.status === 204) {
+      return { success: true };
+    }
+    if (res.status === 404) {
+      // 遠端本就已經不存在，視為已刪除
+      return { success: true, already_deleted: true };
+    }
+    if (res.status === 403) {
+      const errBody: any = await res.json().catch(() => ({}));
+      const rawMsg = errBody?.message || '';
+      return {
+        success: false,
+        error: `GitHub App 缺少 Administration: write 權限或未被授權刪除儲存庫 (HTTP 403: ${sanitizeErrorMessage(rawMsg || 'Forbidden')})。遠端儲存庫未被刪除，建議於 GitHub 網站手動刪除。`,
+      };
+    }
+
+    const errBody: any = await res.json().catch(() => ({}));
+    return {
+      success: false,
+      error: sanitizeErrorMessage(errBody.message || res.statusText || `HTTP ${res.status}`),
+    };
+  } catch (err: any) {
+    return { success: false, error: sanitizeErrorMessage(err?.message || '網路通訊失敗') };
+  }
 }

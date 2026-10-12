@@ -793,6 +793,27 @@ export async function readBinaryFile(
 }
 
 /**
+ * 格式化透明之 Git Commit Message：明確載明發起人與代理執行機制
+ */
+export function formatTransparentCommitMessage(
+  commitMessage: string,
+  sessionUser?: WorkspaceSessionUser | null
+): string {
+  const base = commitMessage.trim();
+  if (!sessionUser || !sessionUser.username) {
+    return base;
+  }
+  const actorUid = sessionUser.github_id ? String(sessionUser.github_id).trim() : 'unknown';
+  const uname = sessionUser.username.trim();
+  const trailer = [
+    `\n\nCo-authored-by: ${uname} <${actorUid}+${uname}@users.noreply.github.com>`,
+    `Initiated-by: @${uname} (GitHub ID: ${actorUid})`,
+    `Execution-Method: GitHub App Server-Side Proxy (Delegated Bot Execution)`,
+  ].join('\n');
+  return base + trailer;
+}
+
+/**
  * 4. 建立或更新文字檔案 (支援自動推導現有 SHA 防競態條件，回傳真實 commit SHA)
  */
 export async function createOrUpdateFile(
@@ -889,8 +910,9 @@ export async function createOrUpdateFile(
   // 4. 編碼內容為 Base64
   const base64Content = stringToBase64(content);
 
+  const formattedMessage = formatTransparentCommitMessage(commitMessage, sessionUser);
   const payload: any = {
-    message: commitMessage.trim(),
+    message: formattedMessage,
     content: base64Content,
   };
   if (targetSha) {
@@ -1052,8 +1074,9 @@ export async function createOrUpdateBinaryFile(
     }
   }
 
+  const formattedMessage = formatTransparentCommitMessage(commitMessage, sessionUser);
   const payload: any = {
-    message: commitMessage.trim(),
+    message: formattedMessage,
     content: base64Content,
   };
   if (targetSha) {
@@ -1099,6 +1122,118 @@ export async function createOrUpdateBinaryFile(
 /**
  * 服務工廠：建立封裝好的 Workspace Service 實例
  */
+/**
+ * 6. 刪除檔案 (需提供現有檔案 SHA，回傳真實 commit SHA)
+ */
+export async function deleteWorkspaceFile(
+  env: any,
+  experimentId: string,
+  filePath: string,
+  commitMessage: string,
+  sessionUser?: WorkspaceSessionUser | null,
+  options?: { sha?: string },
+  fetchFn: typeof fetch = fetch
+): Promise<WorkspaceWriteResult> {
+  const repoInfo = await getWorkspaceRepository(env, experimentId, sessionUser);
+  const normPath = validateWorkspacePath(filePath, { allowEmpty: false });
+
+  // 1. Raw Data Sanctuary 聖域鐵律防護：嚴禁刪除 Raw 原始數據
+  if (isRawSanctuaryPath(normPath)) {
+    throw new WorkspaceError(403, 'Raw sanctuary violation: Deleting raw/* data files is strictly forbidden.');
+  }
+
+  // 2. Separate Report 個人報告隔離防護
+  if (repoInfo.report_mode === 'separate' && normPath.startsWith('report/')) {
+    if (sessionUser && sessionUser.github_id) {
+      const isSelfReport =
+        normPath === `report/${sessionUser.github_id}.md` ||
+        normPath === `report/report-${sessionUser.github_id}.md` ||
+        normPath.startsWith(`report/${sessionUser.github_id}/`);
+      if (!isSelfReport) {
+        throw new WorkspaceError(
+          403,
+          'Separate report mode violation: Collaborators can only delete their personal report'
+        );
+      }
+    }
+  }
+
+  if (!commitMessage || typeof commitMessage !== 'string' || !commitMessage.trim()) {
+    throw new WorkspaceError(400, 'Commit message is required');
+  }
+
+  const token = await obtainInstallationToken(env, fetchFn);
+  const targetPath = resolveScopedPath(repoInfo.scopePrefix || '', normPath);
+  const url = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${encodeRepoPathForUrl(targetPath)}`;
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'Lab-Workspace-System/1.0',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'Content-Type': 'application/json',
+  };
+
+  // 取得目前檔案 SHA (若 options.sha 未顯式指定)
+  let targetSha = options?.sha;
+  if (!targetSha) {
+    const checkRes = await safeFetch(fetchFn, url, { method: 'GET', headers });
+    if (checkRes.ok) {
+      const checkData: any = await checkRes.json();
+      if (checkData?.sha) {
+        targetSha = checkData.sha;
+      }
+    } else if (checkRes.status === 404) {
+      throw new WorkspaceError(404, `File '${normPath}' not found on GitHub repository`);
+    } else {
+      const errBody = await checkRes.json().catch(() => ({ message: checkRes.statusText }));
+      throw new WorkspaceError(
+        checkRes.status >= 500 ? 502 : checkRes.status,
+        `Failed to check existing file state: ${sanitizeErrorMessage(errBody.message || checkRes.statusText)}`
+      );
+    }
+  }
+
+  if (!targetSha) {
+    throw new WorkspaceError(404, `File '${normPath}' not found or SHA unavailable`);
+  }
+
+  const formattedMessage = formatTransparentCommitMessage(commitMessage, sessionUser);
+  const payload: any = {
+    message: formattedMessage,
+    sha: targetSha,
+  };
+
+  const delRes = await safeFetch(fetchFn, url, {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!delRes.ok) {
+    const errBody = await delRes.json().catch(() => ({ message: delRes.statusText }));
+    if (delRes.status === 409) {
+      throw new WorkspaceError(409, 'Conflict: SHA mismatch or parallel modification detected');
+    }
+    throw new WorkspaceError(
+      delRes.status >= 500 ? 502 : delRes.status,
+      `GitHub API error (${delRes.status}): ${sanitizeErrorMessage(errBody.message || delRes.statusText)}`
+    );
+  }
+
+  const delData: any = await delRes.json();
+  const commitSha = delData?.commit?.sha || '';
+
+  return {
+    success: true,
+    path: normPath,
+    action: 'modified',
+    commit_sha: commitSha,
+    commit_message: commitMessage.trim(),
+    content_sha: '',
+  };
+}
+
 export function createWorkspaceService(env: any, fetchFn: typeof fetch = fetch) {
   return {
     getWorkspaceRepository: (experimentId: string, sessionUser?: WorkspaceSessionUser | null) =>
@@ -1185,6 +1320,22 @@ export function createWorkspaceService(env: any, fetchFn: typeof fetch = fetch) 
         experimentId,
         filePath,
         data,
+        message,
+        sessionUser,
+        options,
+        fetchFn
+      ),
+    deleteFile: (
+      experimentId: string,
+      filePath: string,
+      message: string,
+      sessionUser?: WorkspaceSessionUser | null,
+      options?: { sha?: string }
+    ) =>
+      deleteWorkspaceFile(
+        env,
+        experimentId,
+        filePath,
         message,
         sessionUser,
         options,

@@ -32,6 +32,7 @@ import {
   ShieldAlert,
   Clock,
   GitCommit,
+  Trash2,
 } from 'lucide-react';
 
 interface WorkspaceManagerProps {
@@ -283,6 +284,11 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
 
+  // 刪除檔案 Modal 狀態
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deleteCommitMsg, setDeleteCommitMsg] = useState('');
+  const [deletingFile, setDeletingFile] = useState(false);
+
   // 1. 載入根目錄檔案樹
   const loadRootTree = useCallback(async () => {
     setTreeLoading(true);
@@ -499,6 +505,36 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
     await loadFile(currentFile.path);
     setConflictOccurred(false);
     onSuccess('已重新載入最新版本檔案內容');
+  };
+
+  // 7.1 刪除檔案 (保護 Raw Data Sanctuary，呼叫透明身分代理)
+  const handleDeleteFile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentFile) return;
+    if (currentFile.path.startsWith('raw/')) {
+      onError('Raw Data Sanctuary 保護中：原始實驗數據不可刪除');
+      setIsDeleteModalOpen(false);
+      return;
+    }
+    setDeletingFile(true);
+    try {
+      const res = await api.workspace.deleteFile(experiment.id, {
+        path: currentFile.path,
+        message: deleteCommitMsg.trim() || `刪除檔案: ${currentFile.path}`,
+        sha: currentFile.sha,
+      });
+      onSuccess(`檔案已成功刪除！Commit: ${res.commit_sha.slice(0, 7)}`);
+      setIsDeleteModalOpen(false);
+      setCurrentFile(null);
+      setSelectedPath('');
+      setDeleteCommitMsg('');
+      loadRootTree();
+      onActivityRefresh?.();
+    } catch (err: any) {
+      onError(formatWorkspaceError(err, 'save'));
+    } finally {
+      setDeletingFile(false);
+    }
   };
 
   // 8. 上傳原始資料 (Raw Data Sanctuary)
@@ -947,6 +983,29 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                       <span>{saving ? '提交至 GitHub...' : '儲存並產生 Commit'}</span>
                     </button>
                   )}
+
+                  {isCollaborator && (
+                    <button
+                      onClick={() => {
+                        if (selectedPath.startsWith('raw/')) {
+                          onError('Raw Data Sanctuary 保護中：原始實驗數據不可刪除');
+                          return;
+                        }
+                        setDeleteCommitMsg(`刪除檔案: ${selectedPath}`);
+                        setIsDeleteModalOpen(true);
+                      }}
+                      disabled={selectedPath.startsWith('raw/')}
+                      className={`inline-flex items-center space-x-1 text-xs px-2.5 py-1.5 rounded-lg border transition-colors cursor-pointer ${
+                        selectedPath.startsWith('raw/')
+                          ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-50'
+                          : 'border-rose-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300'
+                      }`}
+                      title={selectedPath.startsWith('raw/') ? '原始數據保護區禁止刪除' : '刪除此檔案並提交 Commit 至 GitHub'}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>刪除檔案</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1276,6 +1335,71 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 刪除檔案確認 Modal */}
+      {isDeleteModalOpen && currentFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2 text-rose-600">
+                <Trash2 className="w-5 h-5" />
+                <h3 className="text-base font-bold text-slate-900">確認刪除檔案</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 space-y-1">
+                <p className="font-semibold">⚠️ 此操作將向遠端 GitHub 儲存庫提交刪除 Commit！</p>
+                <p className="text-[11px] text-rose-700">
+                  目標路徑：<span className="font-mono font-bold">{currentFile.path}</span>
+                </p>
+                <p className="text-[11px] text-rose-600">
+                  系統將以透明身分代理記錄您的 GitHub 帳號並寫入不可篡改的活動稽核日誌。
+                </p>
+              </div>
+
+              <form onSubmit={handleDeleteFile} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Commit 說明 (Commit Message)
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteCommitMsg}
+                    onChange={(e) => setDeleteCommitMsg(e.target.value)}
+                    placeholder={`刪除檔案: ${currentFile.path}`}
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-rose-500 font-mono"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsDeleteModalOpen(false)}
+                    className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={deletingFile}
+                    className="px-4 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors disabled:opacity-50 cursor-pointer shadow-xs"
+                  >
+                    {deletingFile ? '正在刪除並提交...' : '確認刪除'}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       )}

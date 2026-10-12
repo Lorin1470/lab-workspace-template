@@ -6,6 +6,8 @@ import {
   AuthUser,
   ReportMode,
   ExperimentStatus,
+  RepositoryDetailsResponse,
+  ActivityLogItem,
 } from '../types/index.ts';
 import { api, ApiError } from '../api/client.ts';
 import {
@@ -22,19 +24,26 @@ import {
   RefreshCw,
   AlertCircle,
   FolderGit2,
+  ExternalLink,
+  Activity,
+  Trash2,
+  CheckCircle2,
+  Search,
+  AlertTriangle,
+  Unlink,
 } from 'lucide-react';
 
 interface CourseDetailProps {
   course: Course;
   user: AuthUser | null;
   onBack: () => void;
-  onSelectExperiment: (exp: Experiment, initialTab?: 'activity' | 'members' | 'report' | 'files' | 'download') => void;
+  onSelectExperiment: (exp: Experiment, initialTab?: 'activity' | 'members' | 'repository' | 'report' | 'files' | 'download') => void;
   onCourseUpdated: (updated: Course) => void;
   onError: (msg: string) => void;
   onSuccess: (msg: string) => void;
 }
 
-type TabType = 'experiments' | 'members';
+type TabType = 'experiments' | 'members' | 'repository' | 'activity';
 
 const expStatusMap: Record<ExperimentStatus, { label: string; badgeClass: string; icon: string }> = {
   not_started: {
@@ -87,6 +96,28 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<CourseMembership | null>(null);
 
+  // 儲存庫管理狀態
+  const [repoDetails, setRepoDetails] = useState<RepositoryDetailsResponse | null>(null);
+  const [repoLoading, setRepoLoading] = useState(false);
+  const [isBindRepoOpen, setIsBindRepoOpen] = useState(false);
+  const [isUnbindRepoOpen, setIsUnbindRepoOpen] = useState(false);
+  const [isDeleteRepoOpen, setIsDeleteRepoOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [bindRepoName, setBindRepoName] = useState('');
+  const [bindRepoDesc, setBindRepoDesc] = useState('');
+  const [bindRepoPrivate, setBindRepoPrivate] = useState(false);
+  const [bindRepoAutoProvision, setBindRepoAutoProvision] = useState(true);
+
+  // 撤銷協作者確認
+  const [revokeConfirmMember, setRevokeConfirmMember] = useState<CourseMembership | null>(null);
+  const [revokingMemberId, setRevokingMemberId] = useState<string | null>(null);
+
+  // 活動紀錄狀態
+  const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityActionFilter, setActivityActionFilter] = useState('');
+  const [activitySearchKeyword, setActivitySearchKeyword] = useState('');
+
   // 編輯課程表單
   const [editName, setEditName] = useState(course.name);
   const [editSemester, setEditSemester] = useState(course.semester);
@@ -126,12 +157,53 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
     }
   };
 
+  const loadRepoDetails = async () => {
+    setRepoLoading(true);
+    try {
+      const data = await api.courses.getRepository(course.id);
+      setRepoDetails(data);
+    } catch (err: any) {
+      console.error('Failed to load repo details:', err);
+    } finally {
+      setRepoLoading(false);
+    }
+  };
+
+  const loadActivityLogs = async () => {
+    setActivityLoading(true);
+    try {
+      const res = await api.activity.list(
+        undefined,
+        undefined,
+        50,
+        {
+          course_id: course.id,
+          action: activityActionFilter || undefined,
+          search: activitySearchKeyword.trim() || undefined,
+        }
+      );
+      setActivityLogs(res.logs || []);
+    } catch (err: any) {
+      console.error('Failed to load activity logs:', err);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
     setEditName(course.name);
     setEditSemester(course.semester);
     setEditStatus(course.status);
-  }, [course.id]);
+    if (activeTab === 'repository') loadRepoDetails();
+    if (activeTab === 'activity') loadActivityLogs();
+  }, [course.id, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'activity') {
+      loadActivityLogs();
+    }
+  }, [activityActionFilter, activitySearchKeyword]);
 
   // 更新課程資訊
   const handleUpdateCourse = async (e: React.FormEvent) => {
@@ -272,6 +344,92 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
       onError(err.message || '重試同步失敗');
     } finally {
       setSyncingMemberId(null);
+    }
+  };
+
+  const handleBindRepository = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormSubmitting(true);
+    setModalError(null);
+    try {
+      const res = await api.courses.bindRepository(course.id, {
+        repository: bindRepoName.includes('/') ? bindRepoName.trim() : undefined,
+        name: !bindRepoName.includes('/') ? bindRepoName.trim() : undefined,
+        description: bindRepoDesc.trim(),
+        private: bindRepoPrivate,
+        auto_provision: bindRepoAutoProvision,
+      });
+      onSuccess(`成功綁定儲存庫: ${res.repository}`);
+      setIsBindRepoOpen(false);
+      onCourseUpdated(res.course);
+      loadRepoDetails();
+    } catch (err: any) {
+      setModalError(err.message || '綁定儲存庫失敗');
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
+  const handleUnbindRepository = async () => {
+    setFormSubmitting(true);
+    try {
+      await api.courses.unbindRepository(course.id);
+      onSuccess('已成功解除儲存庫綁定（遠端儲存庫完好保留）');
+      setIsUnbindRepoOpen(false);
+      onCourseUpdated({ ...course, github_repository: null });
+      loadRepoDetails();
+    } catch (err: any) {
+      onError(err.message || '解除綁定失敗');
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
+  const handleDeleteRepository = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormSubmitting(true);
+    setModalError(null);
+    try {
+      await api.courses.deleteRepository(course.id, deleteConfirmText.trim());
+      onSuccess('遠端儲存庫已成功刪除');
+      setIsDeleteRepoOpen(false);
+      setDeleteConfirmText('');
+      onCourseUpdated({ ...course, github_repository: null });
+      loadRepoDetails();
+    } catch (err: any) {
+      setModalError(err.message || '刪除儲存庫失敗');
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
+  const handleRevokeCollaborator = async (member: CourseMembership) => {
+    setRevokingMemberId(member.id);
+    try {
+      const res = await api.courseMembers.revoke(course.id, member.id);
+      if (res.revoke?.retained) {
+        onSuccess(`@${member.username} 在其他課程或實驗仍有使用此儲存庫，系統已安全保留其 GitHub 協作者權限 (Safe Retention)`);
+      } else {
+        onSuccess(`已成功自 GitHub 儲存庫撤銷 @${member.username} 的協作者權限`);
+      }
+      setRevokeConfirmMember(null);
+      loadData();
+    } catch (err: any) {
+      onError(err.message || '撤銷協作者權限失敗');
+    } finally {
+      setRevokingMemberId(null);
+    }
+  };
+
+  const handleQuickDeactivate = async (member: CourseMembership) => {
+    try {
+      await api.courseMembers.update(course.id, member.id, {
+        status: 'inactive',
+      });
+      onSuccess(`已將 @${member.username} 從課程成員名單移除 (狀態設為 inactive)`);
+      loadData();
+    } catch (err: any) {
+      onError(err.message || '移除成員失敗');
     }
   };
 
@@ -429,6 +587,30 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
           >
             <Users className="w-4 h-4" />
             <span>課程成員 ({members.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('repository')}
+            className={`flex items-center space-x-2 py-3 px-4 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+              activeTab === 'repository'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+            }`}
+          >
+            <FolderGit2 className="w-4 h-4" />
+            <span>儲存庫管理</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('activity')}
+            className={`flex items-center space-x-2 py-3 px-4 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+              activeTab === 'activity'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+            <span>活動與稽核紀錄</span>
           </button>
         </div>
       </div>
@@ -674,7 +856,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                           {m.created_at?.slice(0, 10)}
                         </td>
                         {isCollaborator && (
-                          <td className="px-5 py-3.5 text-right">
+                          <td className="px-5 py-3.5 text-right whitespace-nowrap space-x-2">
                             <button
                               onClick={() => {
                                 setEditingMember(m);
@@ -683,9 +865,29 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                                 setModalError(null);
                               }}
                               className="text-xs font-semibold text-blue-600 hover:text-blue-800 p-1 rounded hover:bg-blue-50 transition-colors cursor-pointer"
+                              title="修改成員角色或狀態"
                             >
-                              管理權限
+                              編輯
                             </button>
+                            {m.status === 'active' && (
+                              <button
+                                onClick={() => handleQuickDeactivate(m)}
+                                className="text-xs font-semibold text-amber-600 hover:text-amber-800 p-1 rounded hover:bg-amber-50 transition-colors cursor-pointer"
+                                title="從課程名單移除 (設為停用，不影響歷史紀錄)"
+                              >
+                                從名單移除
+                              </button>
+                            )}
+                            {m.role === 'student' && m.github_permission_status === 'ready' && course.github_repository && (
+                              <button
+                                onClick={() => setRevokeConfirmMember(m)}
+                                disabled={revokingMemberId === m.id}
+                                className="text-xs font-semibold text-rose-600 hover:text-rose-800 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-50"
+                                title="從 GitHub 儲存庫撤銷協作者權限 (具備多課程保護 Safe Retention)"
+                              >
+                                {revokingMemberId === m.id ? '撤銷中...' : '撤銷 GitHub 權限'}
+                              </button>
+                            )}
                           </td>
                         )}
                       </tr>
@@ -700,6 +902,239 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 分頁三：儲存庫管理 */}
+      {activeTab === 'repository' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-100 pb-4 gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                  <FolderGit2 className="w-5 h-5 text-blue-600" />
+                  <span>課程儲存庫配置 (Course Repository)</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  {course.mode === 'course'
+                    ? 'Course Mode 架構：所有實驗專案共用一個課程儲存庫，各實驗以目錄（Scoped Path）劃分獨立工作區。'
+                    : 'Experiment Mode 架構：本課程採各實驗獨立儲存庫模式，您可以在各實驗專案中分別配置專屬 Repository。'}
+                </p>
+              </div>
+              <button
+                onClick={loadRepoDetails}
+                disabled={repoLoading}
+                className="inline-flex items-center space-x-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer self-start md:self-auto"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${repoLoading ? 'animate-spin' : ''}`} />
+                <span>重新整理遠端資訊</span>
+              </button>
+            </div>
+
+            {course.github_repository ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-2">
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">儲存庫全名</span>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-base font-mono font-bold text-slate-900">{course.github_repository}</span>
+                      <a
+                        href={`https://github.com/${course.github_repository}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-800"
+                        title="在 GitHub 上開啟"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-2">
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">遠端同步狀態</span>
+                    <div>
+                      {repoLoading ? (
+                        <span className="text-xs text-slate-500">正在查驗遠端狀態...</span>
+                      ) : repoDetails?.remote_exists ? (
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>GitHub 遠端連線正常 ({repoDetails.remote?.private ? 'Private 私人' : 'Public 公開'})</span>
+                        </span>
+                      ) : repoDetails?.remote_error ? (
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded text-xs font-semibold bg-red-50 text-red-700 border border-red-200" title={repoDetails.remote_error}>
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <span>遠端查驗異常: {repoDetails.remote_error}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                          <span>已綁定，待確認遠端狀態</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {repoDetails?.remote && (
+                  <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-xs text-slate-600 space-y-1 font-mono">
+                    <div>預設分支：{repoDetails.remote.default_branch}</div>
+                    {repoDetails.remote.description && <div>描述：{repoDetails.remote.description}</div>}
+                    <div>最後更新：{repoDetails.remote.updated_at ? new Date(repoDetails.remote.updated_at).toLocaleString() : '—'}</div>
+                  </div>
+                )}
+
+                {isCollaborator && (
+                  <div className="border-t border-slate-200 pt-4 flex flex-wrap items-center gap-3 justify-end">
+                    <button
+                      onClick={() => setIsUnbindRepoOpen(true)}
+                      className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3.5 py-2 rounded-lg transition-colors cursor-pointer"
+                      title="僅清空系統綁定，不刪除 GitHub 上的儲存庫與提交檔案"
+                    >
+                      <Unlink className="w-3.5 h-3.5 text-slate-500" />
+                      <span>解除綁定 (Unbind)</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDeleteConfirmText('');
+                        setModalError(null);
+                        setIsDeleteRepoOpen(true);
+                      }}
+                      className="inline-flex items-center space-x-1.5 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 px-3.5 py-2 rounded-lg transition-colors cursor-pointer"
+                      title="呼叫 GitHub API 永久刪除此遠端儲存庫 (危險操作，需輸入全名二次確認)"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                      <span>刪除遠端儲存庫 (Delete)</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-8 space-y-4">
+                <div className="w-12 h-12 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mx-auto">
+                  <FolderGit2 className="w-6 h-6" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-semibold text-slate-900">尚未綁定 GitHub 儲存庫</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    綁定儲存庫後，系統將自動為本課程學生同步 GitHub 協作者權限，並啟用完整的 Git 工作區與檔案協作功能。
+                  </p>
+                </div>
+                {isCollaborator && (
+                  <button
+                    onClick={() => {
+                      setBindRepoName('');
+                      setBindRepoDesc(`Course workspace for ${course.name || course.course_code}`);
+                      setBindRepoPrivate(false);
+                      setBindRepoAutoProvision(true);
+                      setModalError(null);
+                      setIsBindRepoOpen(true);
+                    }}
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>建立並綁定儲存庫</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 分頁四：活動與稽核紀錄 */}
+      {activeTab === 'activity' && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center space-x-1 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg">
+                <Search className="w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="搜尋摘要或目標..."
+                  value={activitySearchKeyword}
+                  onChange={(e) => setActivitySearchKeyword(e.target.value)}
+                  className="bg-transparent border-none outline-none text-slate-700 placeholder-slate-400 w-32 md:w-48 text-xs"
+                />
+              </div>
+
+              <select
+                value={activityActionFilter}
+                onChange={(e) => setActivityActionFilter(e.target.value)}
+                className="bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg text-slate-700 text-xs"
+              >
+                <option value="">全部動作類型</option>
+                <option value="file_created">建立檔案 (file_created)</option>
+                <option value="file_modified">更新檔案 (file_modified)</option>
+                <option value="file_deleted">刪除檔案 (file_deleted)</option>
+                <option value="member_added">新增成員 (member_added)</option>
+                <option value="collaborator_revoked">撤銷協作者 (collaborator_revoked)</option>
+                <option value="repository_bound">綁定儲存庫 (repository_bound)</option>
+                <option value="repository_unbound">解除綁定 (repository_unbound)</option>
+                <option value="remote_repository_deleted">刪除遠端庫 (remote_repository_deleted)</option>
+              </select>
+            </div>
+
+            <button
+              onClick={loadActivityLogs}
+              disabled={activityLoading}
+              className="inline-flex items-center space-x-1 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${activityLoading ? 'animate-spin' : ''}`} />
+              <span>重新整理</span>
+            </button>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+            <div className="divide-y divide-slate-100">
+              {activityLogs.map((log) => {
+                let details: any = null;
+                try {
+                  if (log.details_json) details = JSON.parse(log.details_json);
+                } catch {}
+
+                const isBotDelegated = details?.execution_mode === 'bot_delegated';
+                const initiator = details?.initiated_by?.username;
+
+                return (
+                  <div key={log.id} className="p-4 hover:bg-slate-50/80 transition-colors space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-semibold text-slate-900">@{log.actor_name || log.actor_id}</span>
+                        <span className="text-slate-400">•</span>
+                        <span className="font-mono text-slate-500">{new Date(log.timestamp).toLocaleString()}</span>
+                        {isBotDelegated && (
+                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
+                            <span>🤖 GitHub App Bot 代為執行</span>
+                            {initiator && <span>(發起者: @{initiator})</span>}
+                          </span>
+                        )}
+                      </div>
+                      <span className="px-2 py-0.5 rounded font-mono text-[10px] font-semibold bg-slate-100 text-slate-600">
+                        {log.action}
+                      </span>
+                    </div>
+
+                    <div className="text-sm text-slate-800">{log.summary}</div>
+
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 font-mono">
+                      {log.repo_name && <span>儲存庫: {log.repo_name}</span>}
+                      {log.target && <span>目標: {log.target}</span>}
+                      {log.commit_sha && (
+                        <span className="text-blue-600">
+                          Commit: {log.commit_sha.slice(0, 7)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {activityLogs.length === 0 && (
+                <div className="text-center py-12 text-slate-400 text-xs">
+                  {activityLoading ? '載入中...' : '尚無符合條件的活動紀錄'}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1015,6 +1450,258 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 建立 / 綁定儲存庫 Modal */}
+      {isBindRepoOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
+                <FolderGit2 className="w-5 h-5 text-blue-600" />
+                <span>配置課程儲存庫</span>
+              </h3>
+              <button onClick={() => setIsBindRepoOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            {modalError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.2" />
+                <span>{modalError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleBindRepository} className="space-y-4 text-sm">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  儲存庫名稱或全名 <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="例如：course-lab-repo 或 owner/repo"
+                  value={bindRepoName}
+                  onChange={(e) => setBindRepoName(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-mono text-xs"
+                  required
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  若輸入單純名稱，系統將自動加上授權之 Organization/Owner 前綴。
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">儲存庫描述</label>
+                <input
+                  type="text"
+                  placeholder="簡短描述"
+                  value={bindRepoDesc}
+                  onChange={(e) => setBindRepoDesc(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 text-xs"
+                />
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={bindRepoPrivate}
+                    onChange={(e) => setBindRepoPrivate(e.target.checked)}
+                    className="rounded text-blue-600"
+                  />
+                  <span>設為私人儲存庫 (Private Repository)</span>
+                </label>
+
+                <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={bindRepoAutoProvision}
+                    onChange={(e) => setBindRepoAutoProvision(e.target.checked)}
+                    className="rounded text-blue-600"
+                  />
+                  <span>若儲存庫不存在，透過 GitHub App 自動在 GitHub 建立</span>
+                </label>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBindRepoOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={formSubmitting}
+                  className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50"
+                >
+                  {formSubmitting ? '處理中...' : '確認綁定'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 解除綁定 Modal */}
+      {isUnbindRepoOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
+                <Unlink className="w-5 h-5 text-amber-600" />
+                <span>解除儲存庫綁定 (Unbind)</span>
+              </h3>
+              <button onClick={() => setIsUnbindRepoOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1">
+              <div className="font-semibold">⚠️ 這是安全解除綁定操作</div>
+              <p>
+                解除綁定只會清除系統資料庫中的儲存庫關聯，<strong>絕對不會刪除</strong> GitHub 上的實際儲存庫、Commit 歷程或檔案內容。歷史活動紀錄亦完整保留。
+              </p>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              目前綁定之儲存庫：<span className="font-mono font-bold text-slate-900">{course.github_repository}</span>
+            </p>
+
+            <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
+              <button
+                type="button"
+                onClick={() => setIsUnbindRepoOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleUnbindRepository}
+                disabled={formSubmitting}
+                className="px-4 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-lg disabled:opacity-50"
+              >
+                {formSubmitting ? '解除中...' : '確認解除綁定'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 刪除遠端儲存庫 Modal (危險操作，需輸入全名二次確認) */}
+      {isDeleteRepoOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-red-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-red-100 pb-3">
+              <h3 className="text-lg font-bold text-red-600 flex items-center space-x-2">
+                <Trash2 className="w-5 h-5 text-red-600" />
+                <span>危險操作：刪除遠端儲存庫</span>
+              </h3>
+              <button onClick={() => setIsDeleteRepoOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            {modalError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.2" />
+                <span>{modalError}</span>
+              </div>
+            )}
+
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 space-y-1">
+              <div className="font-semibold">🚨 此操作無法復原！</div>
+              <p>
+                系統將呼叫 GitHub API 永久刪除儲存庫 <strong>{course.github_repository}</strong> 及其所有分支、Commit 與檔案。
+              </p>
+              <p className="text-[11px] text-red-700 mt-1">
+                若 GitHub App 未被賦予 Administration: write 權限 (HTTP 403)，系統將誠實回報失敗並提供手動刪除指引，絕不會偽造成功。
+              </p>
+            </div>
+
+            <form onSubmit={handleDeleteRepository} className="space-y-4 text-sm">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  請輸入完整的儲存庫全名以確認刪除：
+                </label>
+                <div className="bg-slate-100 px-3 py-1.5 rounded font-mono text-xs text-slate-700 mb-2 select-all">
+                  {course.github_repository}
+                </div>
+                <input
+                  type="text"
+                  placeholder="請在此處輸入上方完整名稱"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-red-500 font-mono text-xs"
+                  required
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteRepoOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={formSubmitting || deleteConfirmText.trim() !== course.github_repository}
+                  className="px-4 py-2 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-40 cursor-pointer"
+                >
+                  {formSubmitting ? '刪除中...' : '確認永久刪除遠端儲存庫'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 撤銷 GitHub 協作者權限確認 Modal */}
+      {revokeConfirmMember && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
+                <ShieldAlert className="w-5 h-5 text-rose-600" />
+                <span>撤銷 GitHub 協作者權限</span>
+              </h3>
+              <button onClick={() => setRevokeConfirmMember(null)} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600">
+              <p>
+                確定要撤銷 <strong>@{revokeConfirmMember.username}</strong> (ID: {revokeConfirmMember.github_id}) 在儲存庫 <strong>{course.github_repository}</strong> 的協作者權限嗎？
+              </p>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-blue-800 space-y-1">
+                <div className="font-semibold">🛡️ 多課程安全保留保護 (Safe Retention)</div>
+                <p>
+                  若該學生在其他進行中的課程或實驗仍共用此儲存庫，系統將自動安全保留其權限，避免意外中斷其他課程之進行。
+                </p>
+                <p className="text-[11px] text-blue-700 mt-1">
+                  撤銷協作者權限<strong>絕不會</strong>刪除該學生的歷史 Commit、工作區檔案或活動紀錄。
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
+              <button
+                type="button"
+                onClick={() => setRevokeConfirmMember(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRevokeCollaborator(revokeConfirmMember)}
+                disabled={revokingMemberId === revokeConfirmMember.id}
+                className="px-4 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-lg disabled:opacity-50"
+              >
+                {revokingMemberId === revokeConfirmMember.id ? '撤銷中...' : '確認撤銷協作者權限'}
+              </button>
+            </div>
           </div>
         </div>
       )}

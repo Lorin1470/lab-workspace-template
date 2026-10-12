@@ -5,11 +5,14 @@
 
 import {
   provisionRepository,
+  getRemoteRepositoryDetails,
+  deleteRemoteRepository,
   sanitizeErrorMessage,
 } from './services/provisioning.ts';
 import {
   syncStudentCollaborator,
   removeStudentCollaborator,
+  revokeStudentCollaborator,
 } from './services/collaborators.ts';
 import { lookupGitHubUser } from './services/github-users.ts';
 import {
@@ -19,6 +22,7 @@ import {
   readBinaryFile,
   createOrUpdateFile,
   createOrUpdateBinaryFile,
+  deleteWorkspaceFile,
   validateWorkspacePath,
   isRawSanctuaryPath as isWorkspaceRawSanctuaryPath,
   WorkspaceError,
@@ -160,6 +164,81 @@ export function normalizeRepoPath(rawPath: string | null | undefined): string {
 export function isRawSanctuaryPath(normalizedPath: string): boolean {
   if (!normalizedPath) return false;
   return normalizedPath === 'raw' || normalizedPath.startsWith('raw/');
+}
+
+/**
+ * 寫入不可偽造之稽核操作紀錄 (Append-only Audit Log)
+ * 保證 actor 必定來自後端驗證過之 Session，包含真實使用者身分與 GitHub App Bot 代理執行標記
+ */
+export async function logActivity(
+  env: Env,
+  data: {
+    repo_name: string;
+    experiment_id?: string;
+    action: string;
+    actor: {
+      github_id: string | number;
+      username: string;
+      display_name?: string | null;
+      avatar_url?: string | null;
+    };
+    target?: string | null;
+    summary: string;
+    files_changed?: string[];
+    commit_sha?: string | null;
+    status?: 'success' | 'failed';
+    error_summary?: string | null;
+    extra?: Record<string, any>;
+  }
+): Promise<string | null> {
+  if (!env.DB || !data.repo_name) return null;
+  const logId = crypto.randomUUID();
+  const nowIso = new Date().toISOString();
+  const actorId = data.actor.username || String(data.actor.github_id);
+  const actorName = data.actor.display_name || data.actor.username;
+  const details = {
+    executor: 'github_app_bot',
+    execution_mode: 'bot_delegated',
+    bot_description: '由 GitHub App Server-Side Proxy 代為執行 GitHub API 操作',
+    initiated_by: {
+      github_id: String(data.actor.github_id),
+      username: data.actor.username,
+    },
+    status: data.status || 'success',
+    error_summary: data.error_summary ? sanitizeErrorMessage(data.error_summary) : null,
+    ...(data.extra || {}),
+  };
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO activity_logs (
+        id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
+        actor_avatar, requested_by, approved_by, approval_status, action, target, summary, files_changed, commit_sha, details_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      logId,
+      data.repo_name,
+      data.experiment_id || 'system',
+      nowIso,
+      'web',
+      actorId,
+      actorName,
+      data.actor.avatar_url || null,
+      data.actor.username,
+      data.actor.username,
+      'approved',
+      data.action,
+      data.target || null,
+      sanitizeErrorMessage(data.summary),
+      data.files_changed ? JSON.stringify(data.files_changed) : null,
+      data.commit_sha || null,
+      JSON.stringify(details)
+    ).run();
+    return logId;
+  } catch (err) {
+    console.error('Failed to insert audit log:', err);
+    return null;
+  }
 }
 
 export interface PermissionResult {
@@ -440,43 +519,55 @@ export const onRequest = async (context: any) => {
       // 1.1 查詢活動紀錄 (GET)
       if (request.method === 'GET') {
         const repo = url.searchParams.get('repo');
-        if (!repo) {
+        const courseId = url.searchParams.get('course_id');
+        if (!repo && !courseId) {
           return new Response(
-            JSON.stringify({ error: 'Missing required query parameter: repo' }),
+            JSON.stringify({ error: 'Missing required query parameter: repo or course_id' }),
             { status: 400, headers }
           );
         }
 
-        // 檢查該 repo 是否為系統註冊之 Experiment 或 Course (如果是，則必須授權存取)
+        // 檢查該 repo 或 course_id 是否授權存取
         if (env.DB) {
-          const stmt = env.DB.prepare('SELECT id, repository FROM experiments WHERE repository = ?').bind(repo);
-          const expRow: any = await safeD1First(stmt);
-          let courseRow: any = null;
-          if (!expRow || expRow.repository !== repo) {
-            courseRow = await safeD1First(env.DB.prepare('SELECT id, github_repository FROM courses WHERE github_repository = ?').bind(repo));
-          }
-          const isRegistered = Boolean((expRow && expRow.repository === repo) || (courseRow && courseRow.github_repository === repo));
-          if (isRegistered) {
-            const authHeader = request.headers.get('Authorization') || '';
-            const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-            const expectedSecret =
-              env.ACTIVITY_LOG_SECRET ||
-              (typeof process !== 'undefined' && process.env ? process.env.ACTIVITY_LOG_SECRET : undefined);
-            const isBearer = !!(expectedSecret && token && token === expectedSecret);
+          const authHeader = request.headers.get('Authorization') || '';
+          const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+          const expectedSecret =
+            env.ACTIVITY_LOG_SECRET ||
+            (typeof process !== 'undefined' && process.env ? process.env.ACTIVITY_LOG_SECRET : undefined);
+          const isBearer = !!(expectedSecret && token && token === expectedSecret);
 
-            if (!isBearer) {
-              const sessionUser = await getSessionUser(request, env);
-              if (!sessionUser) {
-                return new Response(
-                  JSON.stringify({ error: 'Repository not found or access denied' }),
-                  { status: 404, headers }
-                );
+          if (!isBearer) {
+            const sessionUser = await getSessionUser(request, env);
+            if (!sessionUser) {
+              return new Response(
+                JSON.stringify({ error: 'Repository not found or access denied' }),
+                { status: 404, headers }
+              );
+            }
+
+            if (repo) {
+              const stmt = env.DB.prepare('SELECT id, repository FROM experiments WHERE repository = ?').bind(repo);
+              const expRow: any = await safeD1First(stmt);
+              let courseRow: any = null;
+              if (!expRow || expRow.repository !== repo) {
+                courseRow = await safeD1First(env.DB.prepare('SELECT id, github_repository FROM courses WHERE github_repository = ?').bind(repo));
               }
-              const expParam = url.searchParams.get('exp');
-              const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo, experiment_code: expParam || undefined });
-              if (!perm.allowed) {
+              const isRegistered = Boolean((expRow && expRow.repository === repo) || (courseRow && courseRow.github_repository === repo));
+              if (isRegistered) {
+                const expParam = url.searchParams.get('exp');
+                const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo, experiment_code: expParam || undefined });
+                if (!perm.allowed) {
+                  return new Response(
+                    JSON.stringify({ error: 'Repository not found or access denied' }),
+                    { status: 404, headers }
+                  );
+                }
+              }
+            } else if (courseId) {
+              const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
+              if (!isMember) {
                 return new Response(
-                  JSON.stringify({ error: 'Repository not found or access denied' }),
+                  JSON.stringify({ error: 'Course not found or access denied' }),
                   { status: 404, headers }
                 );
               }
@@ -485,17 +576,50 @@ export const onRequest = async (context: any) => {
         }
 
         const exp = url.searchParams.get('exp');
+        const actionFilter = url.searchParams.get('action');
+        const actorFilter = url.searchParams.get('actor');
+        const searchKeyword = url.searchParams.get('search');
         let limit = parseInt(url.searchParams.get('limit') || '50', 10);
         if (isNaN(limit) || limit < 1) limit = 50;
         if (limit > 100) limit = 100; // 合理上限限制為 100 筆
 
         if (env.DB) {
-          let sql = 'SELECT * FROM activity_logs WHERE repo_name = ?';
-          const binds: any[] = [repo];
+          let sql = 'SELECT * FROM activity_logs WHERE ';
+          const binds: any[] = [];
+
+          if (repo) {
+            sql += 'repo_name = ?';
+            binds.push(repo);
+          } else if (courseId) {
+            const courseRow: any = await safeD1First(env.DB.prepare('SELECT github_repository FROM courses WHERE id = ?').bind(courseId));
+            const expRows: any = await env.DB.prepare('SELECT repository FROM experiments WHERE course_id = ? AND repository IS NOT NULL').bind(courseId).all().catch(() => ({ results: [] }));
+            const repos = Array.from(new Set([courseRow?.github_repository, ...(expRows?.results || []).map((r: any) => r.repository)].filter(Boolean)));
+            if (repos.length === 0) {
+              return new Response(JSON.stringify({ success: true, logs: [] }), { headers });
+            }
+            sql += `repo_name IN (${repos.map(() => '?').join(', ')})`;
+            binds.push(...repos);
+          } else {
+            return new Response(JSON.stringify({ error: 'Missing repo or course_id parameter' }), { status: 400, headers });
+          }
+
           if (exp) {
             sql += ' AND experiment_id = ?';
             binds.push(exp);
           }
+          if (actionFilter) {
+            sql += ' AND action = ?';
+            binds.push(actionFilter);
+          }
+          if (actorFilter) {
+            sql += ' AND (actor_id = ? OR requested_by = ?)';
+            binds.push(actorFilter, actorFilter);
+          }
+          if (searchKeyword) {
+            sql += ' AND (summary LIKE ? OR target LIKE ?)';
+            binds.push(`%${searchKeyword}%`, `%${searchKeyword}%`);
+          }
+
           sql += ' ORDER BY timestamp DESC LIMIT ?';
           binds.push(limit);
 
@@ -1490,6 +1614,319 @@ export const onRequest = async (context: any) => {
       return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
     }
 
+    // 4.4.2 撤銷課程成員之 GitHub 協作者權限 (POST /api/courses/:id/members/:memberId/revoke)
+    const courseMemberRevokeMatch = path.match(/^courses\/([a-zA-Z0-9_-]+)\/members\/([a-zA-Z0-9_-]+)\/revoke$/);
+    if (courseMemberRevokeMatch) {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+      const courseId = courseMemberRevokeMatch[1];
+      const memberId = courseMemberRevokeMatch[2];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const course: any = await safeD1First(
+        env.DB.prepare('SELECT id, status, mode, github_repository FROM courses WHERE id = ?').bind(courseId)
+      );
+      if (!course) {
+        return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
+      }
+
+      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage permissions' }), { status: 403, headers });
+      }
+
+      const targetMem: any = await safeD1First(
+        env.DB.prepare('SELECT * FROM course_memberships WHERE id = ? AND course_id = ?').bind(memberId, courseId)
+      );
+      if (!targetMem) {
+        return new Response(JSON.stringify({ error: 'Course member not found' }), { status: 404, headers });
+      }
+
+      if (targetMem.role !== 'student') {
+        return new Response(JSON.stringify({ error: '只有學生協作者權限受系統同步與撤銷管理' }), { status: 400, headers });
+      }
+
+      if (!course.github_repository) {
+        return new Response(JSON.stringify({ error: 'Course does not have a repository configured' }), { status: 400, headers });
+      }
+
+      const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+      const revokeResult = await revokeStudentCollaborator(env, {
+        repository: course.github_repository,
+        github_id: targetMem.github_id,
+        username: targetMem.username,
+        membershipId: memberId,
+        membershipType: 'course',
+      }, fetchFn);
+
+      await logActivity(env, {
+        repo_name: course.github_repository,
+        action: 'collaborator_revoked',
+        actor: sessionUser,
+        target: targetMem.username,
+        summary: `撤銷課程成員 GitHub 協作者權限: @${targetMem.username} (${revokeResult.retained ? '安全保留，仍有其他有效綁定' : '已自 GitHub 移除'})`,
+        status: revokeResult.success ? 'success' : 'failed',
+        error_summary: revokeResult.error || null,
+        extra: { course_id: courseId, github_id: targetMem.github_id, retained: revokeResult.retained || false },
+      });
+
+      const updatedMem: any = await safeD1First(env.DB.prepare('SELECT * FROM course_memberships WHERE id = ?').bind(memberId));
+      return new Response(JSON.stringify({ success: revokeResult.success, member: updatedMem, revoke: revokeResult }), {
+        status: revokeResult.success ? 200 : 502,
+        headers,
+      });
+    }
+
+    // 4.4.3 課程儲存庫管理 (GET, POST /api/courses/:id/repository)
+    const courseRepoMatch = path.match(/^courses\/([a-zA-Z0-9_-]+)\/repository$/);
+    if (courseRepoMatch) {
+      const courseId = courseRepoMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const course: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId));
+      if (!course) {
+        return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
+      }
+
+      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Course not found or access denied' }), { status: 404, headers });
+      }
+
+      const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+
+      if (request.method === 'GET') {
+        if (!course.github_repository) {
+          return new Response(JSON.stringify({ success: true, bound: false, repository: null, mode: course.mode }), { status: 200, headers });
+        }
+        const remoteDetails = await getRemoteRepositoryDetails(env, course.github_repository, fetchFn);
+        return new Response(JSON.stringify({
+          success: true,
+          bound: true,
+          repository: course.github_repository,
+          mode: course.mode,
+          remote: remoteDetails.success && remoteDetails.exists ? remoteDetails.repository : null,
+          remote_exists: remoteDetails.exists,
+          remote_error: remoteDetails.error || null,
+        }), { status: 200, headers });
+      }
+
+      if (request.method === 'POST') {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        let repoName = (body.repository || '').trim();
+        const customName = (body.name || '').trim();
+        const description = (body.description || `Course workspace: ${course.name || course.course_code}`).trim();
+        const isPrivate = body.private !== undefined ? Boolean(body.private) : false;
+        const autoProvision = Boolean(body.auto_provision);
+
+        let targetOwner = env.GITHUB_APP_TARGET_OWNER ? String(env.GITHUB_APP_TARGET_OWNER).trim() : '';
+        if (!repoName && customName) {
+          if (!targetOwner) {
+            try {
+              const tokenInfo = await getInstallationToken(env, fetchFn);
+              targetOwner = tokenInfo.target_owner || '';
+            } catch (_tErr) {}
+          }
+          if (targetOwner) {
+            repoName = `${targetOwner}/${customName}`;
+          } else {
+            repoName = customName;
+          }
+        }
+
+        if (!repoName) {
+          return new Response(JSON.stringify({ error: '請提供 repository (owner/name) 或 name' }), { status: 400, headers });
+        }
+
+        let provResult: any = null;
+        if (autoProvision || body.create_new) {
+          provResult = await provisionRepository(env, repoName, description, fetchFn, { private: isPrivate });
+          if (!provResult.success) {
+            await logActivity(env, {
+              repo_name: repoName,
+              action: 'repository_provision_failed',
+              actor: sessionUser,
+              summary: `建立課程儲存庫失敗: ${repoName}`,
+              status: 'failed',
+              error_summary: provResult.error,
+              extra: { course_id: courseId },
+            });
+            return new Response(JSON.stringify({
+              success: false,
+              error: provResult.error || '無法建立 GitHub 儲存庫',
+            }), { status: 502, headers });
+          }
+        }
+
+        const now = new Date().toISOString();
+        await env.DB.prepare('UPDATE courses SET github_repository = ?, updated_at = ? WHERE id = ?').bind(repoName, now, courseId).run();
+
+        await logActivity(env, {
+          repo_name: repoName,
+          action: 'repository_bound',
+          actor: sessionUser,
+          target: repoName,
+          summary: `綁定課程儲存庫: ${repoName}`,
+          extra: { course_id: courseId, auto_provision: autoProvision, private: isPrivate },
+        });
+
+        const updatedCourse: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId));
+        return new Response(JSON.stringify({
+          success: true,
+          repository: repoName,
+          course: updatedCourse,
+          provision_result: provResult,
+        }), { status: 200, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.4.4 解除課程儲存庫綁定 (POST /api/courses/:id/repository/unbind)
+    const courseRepoUnbindMatch = path.match(/^courses\/([a-zA-Z0-9_-]+)\/repository\/unbind$/);
+    if (courseRepoUnbindMatch) {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+      const courseId = courseRepoUnbindMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const course: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId));
+      if (!course) {
+        return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
+      }
+
+      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage repository settings' }), { status: 403, headers });
+      }
+
+      if (!course.github_repository) {
+        return new Response(JSON.stringify({ error: 'Course does not have a repository bound' }), { status: 400, headers });
+      }
+
+      const oldRepo = course.github_repository;
+      const now = new Date().toISOString();
+      await env.DB.prepare('UPDATE courses SET github_repository = NULL, updated_at = ? WHERE id = ?').bind(now, courseId).run();
+
+      await logActivity(env, {
+        repo_name: oldRepo,
+        action: 'repository_unbound',
+        actor: sessionUser,
+        target: oldRepo,
+        summary: `解除課程儲存庫綁定: ${oldRepo} (遠端儲存庫與歷史資料完好保留)`,
+        extra: { course_id: courseId },
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        message: '儲存庫已成功解除綁定，遠端儲存庫與歷史資料完好保留。',
+      }), { status: 200, headers });
+    }
+
+    // 4.4.5 刪除遠端課程儲存庫 (POST /api/courses/:id/repository/delete)
+    const courseRepoDeleteMatch = path.match(/^courses\/([a-zA-Z0-9_-]+)\/repository\/delete$/);
+    if (courseRepoDeleteMatch) {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+      const courseId = courseRepoDeleteMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const course: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(courseId));
+      if (!course) {
+        return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
+      }
+
+      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can delete repository' }), { status: 403, headers });
+      }
+
+      if (!course.github_repository) {
+        return new Response(JSON.stringify({ error: 'Course does not have a repository bound' }), { status: 400, headers });
+      }
+
+      const body = await request.json().catch(() => null);
+      const confirmation = (body?.repository_confirmation || body?.confirm_name || '').trim();
+      if (confirmation !== course.github_repository) {
+        return new Response(JSON.stringify({
+          error: `確認名稱與目標儲存庫全名不符。請輸入完整的「${course.github_repository}」以確認刪除。`,
+        }), { status: 400, headers });
+      }
+
+      const targetRepo = course.github_repository;
+      const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+      const delResult = await deleteRemoteRepository(env, targetRepo, fetchFn);
+
+      if (!delResult.success) {
+        await logActivity(env, {
+          repo_name: targetRepo,
+          action: 'remote_repository_delete_failed',
+          actor: sessionUser,
+          target: targetRepo,
+          summary: `刪除遠端儲存庫失敗: ${delResult.error}`,
+          status: 'failed',
+          error_summary: delResult.error,
+          extra: { course_id: courseId },
+        });
+
+        const status = delResult.error?.includes('403') ? 403 : 502;
+        return new Response(JSON.stringify({
+          success: false,
+          error: delResult.error,
+        }), { status, headers });
+      }
+
+      const now = new Date().toISOString();
+      await env.DB.prepare('UPDATE courses SET github_repository = NULL, updated_at = ? WHERE id = ?').bind(now, courseId).run();
+
+      await logActivity(env, {
+        repo_name: targetRepo,
+        action: 'remote_repository_deleted',
+        actor: sessionUser,
+        target: targetRepo,
+        summary: `已永久刪除遠端儲存庫: ${targetRepo}`,
+        status: 'success',
+        extra: { course_id: courseId, already_deleted: delResult.already_deleted || false },
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        message: '遠端儲存庫已成功刪除。',
+        already_deleted: delResult.already_deleted || false,
+      }), { status: 200, headers });
+    }
+
     // 4.5 Experiments 集合操作 (GET: 查詢, POST: 建立)
     if (path === 'experiments') {
       const sessionUser = await getSessionUser(request, env);
@@ -2051,6 +2488,367 @@ export const onRequest = async (context: any) => {
       return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
     }
 
+    // 4.8.2 撤銷實驗成員之 GitHub 協作者權限 (POST /api/experiments/:id/members/:memberId/revoke)
+    const expMemberRevokeMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/members\/([a-zA-Z0-9_-]+)\/revoke$/);
+    if (expMemberRevokeMatch) {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+      const expId = expMemberRevokeMatch[1];
+      const memberId = expMemberRevokeMatch[2];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT id, course_id, repository FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage permissions' }), { status: 403, headers });
+      }
+
+      const targetMem: any = await safeD1First(
+        env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ? AND experiment_id = ?').bind(memberId, expId)
+      );
+      if (!targetMem) {
+        return new Response(JSON.stringify({ error: 'Experiment member not found' }), { status: 404, headers });
+      }
+
+      const expCourse: any = await safeD1First(env.DB.prepare('SELECT id, mode, github_repository FROM courses WHERE id = ?').bind(exp.course_id));
+      if (expCourse?.mode === 'course') {
+        return new Response(JSON.stringify({
+          error: 'Course Mode 下，GitHub Repository 權限屬於課程層級統一管理，無法在實驗層級單獨撤銷。請至課程成員名單操作。',
+        }), { status: 400, headers });
+      }
+
+      if (!exp.repository) {
+        return new Response(JSON.stringify({ error: 'Experiment does not have a repository configured' }), { status: 400, headers });
+      }
+
+      const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+      const revokeResult = await revokeStudentCollaborator(env, {
+        repository: exp.repository,
+        github_id: targetMem.github_id,
+        username: targetMem.username,
+        membershipId: memberId,
+        membershipType: 'experiment',
+      }, fetchFn);
+
+      await logActivity(env, {
+        repo_name: exp.repository,
+        experiment_id: exp.id,
+        action: 'collaborator_revoked',
+        actor: sessionUser,
+        target: targetMem.username,
+        summary: `撤銷實驗成員 GitHub 協作者權限: @${targetMem.username} (${revokeResult.retained ? '安全保留，仍有其他有效綁定' : '已自 GitHub 移除'})`,
+        status: revokeResult.success ? 'success' : 'failed',
+        error_summary: revokeResult.error || null,
+        extra: { experiment_id: expId, github_id: targetMem.github_id, retained: revokeResult.retained || false },
+      });
+
+      const updatedMem: any = await safeD1First(env.DB.prepare('SELECT * FROM experiment_memberships WHERE id = ?').bind(memberId));
+      return new Response(JSON.stringify({ success: revokeResult.success, member: updatedMem, revoke: revokeResult }), {
+        status: revokeResult.success ? 200 : 502,
+        headers,
+      });
+    }
+
+    // 4.8.3 實驗儲存庫管理 (GET, POST /api/experiments/:id/repository)
+    const expRepoMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/repository$/);
+    if (expRepoMatch) {
+      const expId = expRepoMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT * FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const course: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(exp.course_id));
+      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Experiment not found or access denied' }), { status: 404, headers });
+      }
+
+      const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+
+      if (request.method === 'GET') {
+        if (course?.mode === 'course') {
+          let remoteDetails: any = { exists: false };
+          if (course.github_repository) {
+            remoteDetails = await getRemoteRepositoryDetails(env, course.github_repository, fetchFn);
+          }
+          return new Response(JSON.stringify({
+            success: true,
+            mode: 'course',
+            bound: Boolean(course.github_repository),
+            repository: course.github_repository,
+            message: '本實驗使用課程共用儲存庫',
+            remote: remoteDetails.success && remoteDetails.exists ? remoteDetails.repository : null,
+            remote_exists: remoteDetails.exists,
+            remote_error: remoteDetails.error || null,
+          }), { status: 200, headers });
+        }
+
+        // Experiment mode
+        if (!exp.repository) {
+          return new Response(JSON.stringify({
+            success: true,
+            mode: 'experiment',
+            bound: false,
+            repository: null,
+          }), { status: 200, headers });
+        }
+
+        const remoteDetails = await getRemoteRepositoryDetails(env, exp.repository, fetchFn);
+        return new Response(JSON.stringify({
+          success: true,
+          mode: 'experiment',
+          bound: true,
+          repository: exp.repository,
+          remote: remoteDetails.success && remoteDetails.exists ? remoteDetails.repository : null,
+          remote_exists: remoteDetails.exists,
+          remote_error: remoteDetails.error || null,
+        }), { status: 200, headers });
+      }
+
+      if (request.method === 'POST') {
+        if (course?.mode === 'course') {
+          return new Response(JSON.stringify({
+            error: '本課程為 Course Mode（課程共用儲存庫），實驗不可單獨配置儲存庫。請至課程設定管理共用儲存庫。',
+          }), { status: 400, headers });
+        }
+
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') {
+          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
+        }
+
+        let repoName = (body.repository || '').trim();
+        const customName = (body.name || '').trim();
+        const description = (body.description || `Lab workspace for ${exp.experiment_code}: ${exp.name}`).trim();
+        const isPrivate = body.private !== undefined ? Boolean(body.private) : false;
+        const autoProvision = Boolean(body.auto_provision);
+
+        let targetOwner = env.GITHUB_APP_TARGET_OWNER ? String(env.GITHUB_APP_TARGET_OWNER).trim() : '';
+        if (!repoName && customName) {
+          if (!targetOwner) {
+            try {
+              const tokenInfo = await getInstallationToken(env, fetchFn);
+              targetOwner = tokenInfo.target_owner || '';
+            } catch (_tErr) {}
+          }
+          if (targetOwner) {
+            repoName = `${targetOwner}/${customName}`;
+          } else {
+            repoName = customName;
+          }
+        }
+
+        if (!repoName) {
+          return new Response(JSON.stringify({ error: '請提供 repository (owner/name) 或 name' }), { status: 400, headers });
+        }
+
+        let provResult: any = null;
+        if (autoProvision || body.create_new) {
+          provResult = await provisionRepository(env, repoName, description, fetchFn, { private: isPrivate });
+          if (!provResult.success) {
+            await logActivity(env, {
+              repo_name: repoName,
+              experiment_id: exp.experiment_code,
+              action: 'repository_provision_failed',
+              actor: sessionUser,
+              summary: `建立實驗儲存庫失敗: ${repoName}`,
+              status: 'failed',
+              error_summary: provResult.error,
+              extra: { experiment_id: expId },
+            });
+            return new Response(JSON.stringify({
+              success: false,
+              error: provResult.error || '無法建立 GitHub 儲存庫',
+            }), { status: 502, headers });
+          }
+        }
+
+        const now = new Date().toISOString();
+        await env.DB.prepare('UPDATE experiments SET repository = ?, provisioning_status = "ready", provisioning_error = NULL, provisioned_at = ?, updated_at = ? WHERE id = ?').bind(now, now, repoName, expId).run();
+
+        await logActivity(env, {
+          repo_name: repoName,
+          experiment_id: exp.experiment_code,
+          action: 'repository_bound',
+          actor: sessionUser,
+          target: repoName,
+          summary: `綁定實驗專屬儲存庫: ${repoName}`,
+          extra: { experiment_id: expId, auto_provision: autoProvision, private: isPrivate },
+        });
+
+        const updatedExp: any = await safeD1First(env.DB.prepare('SELECT * FROM experiments WHERE id = ?').bind(expId));
+        return new Response(JSON.stringify({
+          success: true,
+          repository: repoName,
+          experiment: updatedExp,
+          provision_result: provResult,
+        }), { status: 200, headers });
+      }
+
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+    }
+
+    // 4.8.4 解除實驗儲存庫綁定 (POST /api/experiments/:id/repository/unbind)
+    const expRepoUnbindMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/repository\/unbind$/);
+    if (expRepoUnbindMatch) {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+      const expId = expRepoUnbindMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT * FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const course: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(exp.course_id));
+      if (course?.mode === 'course') {
+        return new Response(JSON.stringify({ error: 'Course Mode 使用課程共用儲存庫，無法在實驗層級解除綁定。' }), { status: 400, headers });
+      }
+
+      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage repository settings' }), { status: 403, headers });
+      }
+
+      if (!exp.repository) {
+        return new Response(JSON.stringify({ error: 'Experiment does not have a repository bound' }), { status: 400, headers });
+      }
+
+      const oldRepo = exp.repository;
+      const now = new Date().toISOString();
+      await env.DB.prepare('UPDATE experiments SET repository = NULL, provisioning_status = "pending", updated_at = ? WHERE id = ?').bind(now, expId).run();
+
+      await logActivity(env, {
+        repo_name: oldRepo,
+        experiment_id: exp.experiment_code,
+        action: 'repository_unbound',
+        actor: sessionUser,
+        target: oldRepo,
+        summary: `解除實驗專屬儲存庫綁定: ${oldRepo} (遠端儲存庫與歷史資料完好保留)`,
+        extra: { experiment_id: expId },
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        message: '實驗儲存庫已成功解除綁定，遠端儲存庫與歷史資料完好保留。',
+      }), { status: 200, headers });
+    }
+
+    // 4.8.5 刪除遠端實驗儲存庫 (POST /api/experiments/:id/repository/delete)
+    const expRepoDeleteMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/repository\/delete$/);
+    if (expRepoDeleteMatch) {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
+      }
+      const expId = expRepoDeleteMatch[1];
+      const sessionUser = await getSessionUser(request, env);
+      if (!sessionUser) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Valid session required' }), { status: 401, headers });
+      }
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
+      }
+
+      const exp: any = await safeD1First(env.DB.prepare('SELECT * FROM experiments WHERE id = ?').bind(expId));
+      if (!exp) {
+        return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
+      }
+
+      const course: any = await safeD1First(env.DB.prepare('SELECT * FROM courses WHERE id = ?').bind(exp.course_id));
+      if (course?.mode === 'course') {
+        return new Response(JSON.stringify({ error: 'Course Mode 之儲存庫為全課程共用，無法從實驗刪除。' }), { status: 400, headers });
+      }
+
+      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
+      if (!isMember) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can delete repository' }), { status: 403, headers });
+      }
+
+      if (!exp.repository) {
+        return new Response(JSON.stringify({ error: 'Experiment does not have a repository bound' }), { status: 400, headers });
+      }
+
+      const body = await request.json().catch(() => null);
+      const confirmation = (body?.repository_confirmation || body?.confirm_name || '').trim();
+      if (confirmation !== exp.repository) {
+        return new Response(JSON.stringify({
+          error: `確認名稱與目標儲存庫全名不符。請輸入完整的「${exp.repository}」以確認刪除。`,
+        }), { status: 400, headers });
+      }
+
+      const targetRepo = exp.repository;
+      const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+      const delResult = await deleteRemoteRepository(env, targetRepo, fetchFn);
+
+      if (!delResult.success) {
+        await logActivity(env, {
+          repo_name: targetRepo,
+          experiment_id: exp.experiment_code,
+          action: 'remote_repository_delete_failed',
+          actor: sessionUser,
+          target: targetRepo,
+          summary: `刪除遠端實驗儲存庫失敗: ${delResult.error}`,
+          status: 'failed',
+          error_summary: delResult.error,
+          extra: { experiment_id: expId },
+        });
+
+        const status = delResult.error?.includes('403') ? 403 : 502;
+        return new Response(JSON.stringify({
+          success: false,
+          error: delResult.error,
+        }), { status, headers });
+      }
+
+      const now = new Date().toISOString();
+      await env.DB.prepare('UPDATE experiments SET repository = NULL, provisioning_status = "pending", updated_at = ? WHERE id = ?').bind(now, expId).run();
+
+      await logActivity(env, {
+        repo_name: targetRepo,
+        experiment_id: exp.experiment_code,
+        action: 'remote_repository_deleted',
+        actor: sessionUser,
+        target: targetRepo,
+        summary: `已永久刪除遠端實驗儲存庫: ${targetRepo}`,
+        status: 'success',
+        extra: { experiment_id: expId, already_deleted: delResult.already_deleted || false },
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        message: '遠端儲存庫已成功刪除。',
+        already_deleted: delResult.already_deleted || false,
+      }), { status: 200, headers });
+    }
+
     // 4.9 實驗儲存庫自動建立與狀態查詢 (POST /api/experiments/:id/provision, GET /api/experiments/:id/provision)
     const expProvisionMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/provision$/);
     if (expProvisionMatch) {
@@ -2326,7 +3124,7 @@ export const onRequest = async (context: any) => {
     // 4.11 實驗工作區單一檔案讀取與寫入 (GET /api/experiments/:id/workspace/file, PUT /api/experiments/:id/workspace/file)
     const expWsFileMatch = path.match(/^experiments\/([a-zA-Z0-9_-]+)\/workspace\/file$/);
     if (expWsFileMatch) {
-      if (request.method !== 'GET' && request.method !== 'PUT') {
+      if (request.method !== 'GET' && request.method !== 'PUT' && request.method !== 'DELETE') {
         return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers });
       }
 
@@ -2426,33 +3224,18 @@ export const onRequest = async (context: any) => {
           );
 
           const action = writeResult.action === 'created' ? 'file_created' : 'file_modified';
-          const nowIso = new Date().toISOString();
-          const logId = crypto.randomUUID();
           try {
             const repoInfo = await getWorkspaceRepository(env, expId, sessionUser);
-            await env.DB.prepare(
-              `INSERT INTO activity_logs (
-                id, repo_name, experiment_id, timestamp, actor_type, actor_id, actor_name,
-                actor_avatar, requested_by, approved_by, approval_status, action, target, summary, files_changed, commit_sha
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            ).bind(
-              logId,
-              repoInfo.full_name,
-              exp.experiment_code,
-              nowIso,
-              'web',
-              sessionUser.username,
-              sessionUser.display_name || sessionUser.username,
-              sessionUser.avatar_url || null,
-              sessionUser.username,
-              sessionUser.username,
-              'approved',
+            await logActivity(env, {
+              repo_name: repoInfo.full_name,
+              experiment_id: exp.experiment_code,
               action,
-              normPath,
-              `${action === 'file_created' ? '建立檔案' : '更新檔案'}: ${normPath}`,
-              JSON.stringify([normPath]),
-              writeResult.commit_sha
-            ).run();
+              actor: sessionUser,
+              target: normPath,
+              summary: `${action === 'file_created' ? '建立檔案' : '更新檔案'}: ${normPath}`,
+              files_changed: [normPath],
+              commit_sha: writeResult.commit_sha,
+            });
           } catch (_logErr) {
             console.error('Failed to write activity log:', _logErr);
           }
@@ -2464,6 +3247,84 @@ export const onRequest = async (context: any) => {
               action: writeResult.action || (sha ? 'modified' : 'created'),
               commit_sha: writeResult.commit_sha,
               content_sha: writeResult.content_sha,
+            }),
+            { status: 200, headers }
+          );
+        } catch (err: any) {
+          const status = err instanceof WorkspaceError ? err.status : (err.status || 500);
+          return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status, headers });
+        }
+      }
+
+      if (request.method === 'DELETE') {
+        let filePath = url.searchParams.get('path');
+        let message = url.searchParams.get('message') || '';
+        let sha = url.searchParams.get('sha') || undefined;
+
+        if (!filePath) {
+          const body = await request.json().catch(() => null);
+          if (body && typeof body === 'object') {
+            filePath = body.path;
+            if (body.message) message = body.message;
+            if (body.sha) sha = body.sha;
+          }
+        }
+
+        if (!filePath || typeof filePath !== 'string') {
+          return new Response(JSON.stringify({ error: 'Missing required field: path' }), { status: 400, headers });
+        }
+
+        let normPath: string;
+        try {
+          normPath = validateWorkspacePath(filePath, { allowEmpty: false });
+        } catch (err: any) {
+          return new Response(JSON.stringify({ error: sanitizeErrorMessage(err.message) }), { status: 400, headers });
+        }
+
+        // 鐵律防護：嚴禁刪除 raw/* 原始數據
+        if (isWorkspaceRawSanctuaryPath(normPath)) {
+          return new Response(
+            JSON.stringify({ error: 'Raw sanctuary violation: Deleting raw/* data files is strictly forbidden.' }),
+            { status: 403, headers }
+          );
+        }
+
+        const commitMsg = message.trim() || `Delete ${normPath}`;
+
+        try {
+          const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+          const delResult = await deleteWorkspaceFile(
+            env,
+            expId,
+            normPath,
+            commitMsg,
+            sessionUser,
+            { sha },
+            fetchFn
+          );
+
+          try {
+            const repoInfo = await getWorkspaceRepository(env, expId, sessionUser);
+            await logActivity(env, {
+              repo_name: repoInfo.full_name,
+              experiment_id: exp.experiment_code,
+              action: 'file_deleted',
+              actor: sessionUser,
+              target: normPath,
+              summary: `刪除檔案: ${normPath}`,
+              files_changed: [normPath],
+              commit_sha: delResult.commit_sha,
+            });
+          } catch (_logErr) {
+            console.error('Failed to write activity log:', _logErr);
+          }
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              path: normPath,
+              action: 'file_deleted',
+              commit_sha: delResult.commit_sha,
             }),
             { status: 200, headers }
           );

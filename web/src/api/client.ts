@@ -19,6 +19,8 @@ import {
   WorkspaceFileItem,
   WorkspaceFileContent,
   WorkspaceWriteResponse,
+  RepositoryDetailsResponse,
+  BindRepositoryRequest,
 } from '../types/index.ts';
 
 export class ApiError extends Error {
@@ -133,6 +135,32 @@ export const api = {
       });
       return res.course;
     },
+    getRepository: async (courseId: string): Promise<RepositoryDetailsResponse> => {
+      return await request<RepositoryDetailsResponse>(`/api/courses/${encodeURIComponent(courseId)}/repository`);
+    },
+    bindRepository: async (
+      courseId: string,
+      data: BindRepositoryRequest
+    ): Promise<{ success: boolean; repository: string; course: Course }> => {
+      return await request(`/api/courses/${encodeURIComponent(courseId)}/repository`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    unbindRepository: async (courseId: string): Promise<{ success: boolean; message: string }> => {
+      return await request(`/api/courses/${encodeURIComponent(courseId)}/repository/unbind`, {
+        method: 'POST',
+      });
+    },
+    deleteRepository: async (
+      courseId: string,
+      repositoryConfirmation: string
+    ): Promise<{ success: boolean; message: string }> => {
+      return await request(`/api/courses/${encodeURIComponent(courseId)}/repository/delete`, {
+        method: 'POST',
+        body: JSON.stringify({ repository_confirmation: repositoryConfirmation }),
+      });
+    },
   },
 
   // 課程成員管理 (Course Memberships)
@@ -173,6 +201,17 @@ export const api = {
     ): Promise<{ success: boolean; member: CourseMembership; sync?: any }> => {
       return await request(
         `/api/courses/${encodeURIComponent(courseId)}/members/${encodeURIComponent(memberId)}/sync`,
+        {
+          method: 'POST',
+        }
+      );
+    },
+    revoke: async (
+      courseId: string,
+      memberId: string
+    ): Promise<{ success: boolean; member: CourseMembership; revoke?: any }> => {
+      return await request(
+        `/api/courses/${encodeURIComponent(courseId)}/members/${encodeURIComponent(memberId)}/revoke`,
         {
           method: 'POST',
         }
@@ -249,6 +288,32 @@ export const api = {
         { method: 'GET' }
       );
     },
+    getRepository: async (expId: string): Promise<RepositoryDetailsResponse> => {
+      return await request<RepositoryDetailsResponse>(`/api/experiments/${encodeURIComponent(expId)}/repository`);
+    },
+    bindRepository: async (
+      expId: string,
+      data: BindRepositoryRequest
+    ): Promise<{ success: boolean; repository: string; experiment: Experiment }> => {
+      return await request(`/api/experiments/${encodeURIComponent(expId)}/repository`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    unbindRepository: async (expId: string): Promise<{ success: boolean; message: string }> => {
+      return await request(`/api/experiments/${encodeURIComponent(expId)}/repository/unbind`, {
+        method: 'POST',
+      });
+    },
+    deleteRepository: async (
+      expId: string,
+      repositoryConfirmation: string
+    ): Promise<{ success: boolean; message: string }> => {
+      return await request(`/api/experiments/${encodeURIComponent(expId)}/repository/delete`, {
+        method: 'POST',
+        body: JSON.stringify({ repository_confirmation: repositoryConfirmation }),
+      });
+    },
   },
 
   // 實驗成員管理 (Experiment Memberships)
@@ -297,19 +362,37 @@ export const api = {
         }
       );
     },
+    revoke: async (
+      experimentId: string,
+      memberId: string
+    ): Promise<{ success: boolean; member: ExperimentMembership; revoke?: any }> => {
+      return await request(
+        `/api/experiments/${encodeURIComponent(experimentId)}/members/${encodeURIComponent(memberId)}/revoke`,
+        {
+          method: 'POST',
+        }
+      );
+    },
   },
 
   // 活動紀錄 (Activity Logs)
   activity: {
     list: async (
-      repo: string,
+      repo?: string,
       exp?: string,
-      limit: number = 50
+      limit: number = 50,
+      extra?: { course_id?: string; action?: string; actor?: string; search?: string }
     ): Promise<{ logs: ActivityLogItem[]; mode?: string }> => {
-      let url = `/api/activity?repo=${encodeURIComponent(repo)}&limit=${limit}`;
-      if (exp) {
-        url += `&exp=${encodeURIComponent(exp)}`;
-      }
+      const params = new URLSearchParams();
+      if (repo) params.set('repo', repo);
+      if (exp) params.set('exp', exp);
+      if (limit) params.set('limit', String(limit));
+      if (extra?.course_id) params.set('course_id', extra.course_id);
+      if (extra?.action) params.set('action', extra.action);
+      if (extra?.actor) params.set('actor', extra.actor);
+      if (extra?.search) params.set('search', extra.search);
+
+      const url = `/api/activity?${params.toString()}`;
       const data = await request<{ success: boolean; logs: ActivityLogItem[]; mode?: string }>(url);
       return {
         logs: data.logs || [],
@@ -369,6 +452,22 @@ export const api = {
         `/api/experiments/${encodeURIComponent(expId)}/workspace/file`,
         {
           method: 'PUT',
+          body: JSON.stringify(data),
+        }
+      );
+    },
+    deleteFile: async (
+      expId: string,
+      data: {
+        path: string;
+        message?: string;
+        sha?: string;
+      }
+    ): Promise<{ success: boolean; path: string; action: string; commit_sha: string }> => {
+      return await request(
+        `/api/experiments/${encodeURIComponent(expId)}/workspace/file`,
+        {
+          method: 'DELETE',
           body: JSON.stringify(data),
         }
       );

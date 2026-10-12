@@ -248,6 +248,60 @@ class MockCollabD1 {
             return { success: true };
           }
 
+          if (q.startsWith('UPDATE courses SET')) {
+            const id = binds[binds.length - 1];
+            const c = this.courses.get(id);
+            if (c) {
+              if (q.includes('github_repository = NULL')) {
+                c.github_repository = null;
+              } else if (q.includes('github_repository = ?')) {
+                const idx = (q.slice(0, q.indexOf('github_repository = ?')).match(/\?/g) || []).length;
+                c.github_repository = binds[idx];
+              }
+              c.updated_at = new Date().toISOString();
+            }
+            return { success: true };
+          }
+
+          if (q.startsWith('UPDATE experiments SET')) {
+            const id = binds[binds.length - 1];
+            const e = this.experiments.get(id);
+            if (e) {
+              if (q.includes('repository = NULL')) {
+                e.repository = null;
+              } else if (q.includes('repository = ?')) {
+                const idx = (q.slice(0, q.indexOf('repository = ?')).match(/\?/g) || []).length;
+                e.repository = binds[idx];
+              }
+              e.updated_at = new Date().toISOString();
+            }
+            return { success: true };
+          }
+
+          if (q.startsWith('INSERT INTO activity_logs')) {
+            const log = {
+              id: binds[0],
+              repo_name: binds[1],
+              experiment_id: binds[2],
+              timestamp: binds[3],
+              actor_type: binds[4],
+              actor_id: binds[5],
+              actor_name: binds[6],
+              actor_avatar: binds[7],
+              requested_by: binds[8],
+              approved_by: binds[9],
+              approval_status: binds[10],
+              action: binds[11],
+              target: binds[12],
+              summary: binds[13],
+              files_changed: binds[14],
+              commit_sha: binds[15],
+              details_json: binds[16],
+            };
+            this.activityLogs.push(log);
+            return { success: true };
+          }
+
           return { success: true };
         },
 
@@ -319,6 +373,22 @@ class MockCollabD1 {
             return { active_count: count };
           }
 
+          if (q.includes('FROM experiments WHERE course_id = ? AND experiment_code = ?')) {
+            const [cid, code] = binds;
+            for (const e of this.experiments.values()) {
+              if (e.course_id === cid && e.experiment_code === code) return projectFields(e, q);
+            }
+            return null;
+          }
+
+          if (q.includes('FROM experiments WHERE course_id = ?')) {
+            const cid = binds[0];
+            for (const e of this.experiments.values()) {
+              if (e.course_id === cid) return projectFields(e, q);
+            }
+            return null;
+          }
+
           return null;
         },
 
@@ -335,6 +405,10 @@ class MockCollabD1 {
             const list = Array.from(this.experimentMemberships.values())
               .filter((m) => m.experiment_id === eid)
               .map((m) => projectFields(m, q));
+            return { results: list };
+          }
+          if (q.includes('FROM activity_logs')) {
+            const list = [...this.activityLogs].map((l) => projectFields(l, q));
             return { results: list };
           }
           return { results: [] };
@@ -359,6 +433,7 @@ class MockGitHubApi {
     this.deleteFailureStatus = 500;
     this.putFailureBody = { message: 'Internal GitHub Error' };
     this.nonExistentRepos = new Set();
+    this.shouldFailRepoDelete = false;
     this.rateLimitUser = null;
     this.timeoutUser = null;
     this.users = new Map([
@@ -466,6 +541,74 @@ class MockGitHubApi {
         }
         this.collaborators.delete(collabKey);
         return new Response(null, { status: 204 });
+      }
+    }
+
+    // 5. Repo Details & Delete API: /repos/{owner}/{repo}
+    const repoMatch = urlStr.match(/https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/?#]+)$/);
+    if (repoMatch) {
+      const owner = repoMatch[1];
+      const repo = repoMatch[2];
+      const fullName = `${owner}/${repo}`;
+      if (method === 'GET') {
+        if (this.nonExistentRepos.has(fullName.toLowerCase())) {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        return new Response(JSON.stringify({
+          id: 12345,
+          name: repo,
+          full_name: fullName,
+          private: true,
+          default_branch: 'main',
+          html_url: `https://github.com/${fullName}`,
+          permissions: { admin: true, push: true, pull: true },
+        }), { status: 200 });
+      }
+      if (method === 'DELETE') {
+        if (this.shouldFailRepoDelete) {
+          return new Response(JSON.stringify({ message: 'Must have admin rights to Repository' }), { status: 403 });
+        }
+        return new Response(null, { status: 204 });
+      }
+    }
+
+    // 6. Repo Provisioning / Template API
+    if ((urlStr.includes('/generate') || urlStr.match(/https:\/\/api\.github\.com\/(?:orgs\/[^/]+|user)\/repos/)) && method === 'POST') {
+      const name = parsedBody?.name || 'new-repo';
+      return new Response(JSON.stringify({
+        id: 99999,
+        name,
+        full_name: `Lorin1470/${name}`,
+        html_url: `https://github.com/Lorin1470/${name}`,
+        private: parsedBody?.private !== false,
+        default_branch: 'main',
+        permissions: { admin: true, push: true, pull: true },
+      }), { status: 201 });
+    }
+
+    // 7. Workspace Contents API: GET & DELETE /repos/{owner}/{repo}/contents/(.+)
+    const fileMatch = urlStr.match(/https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/contents\/(.+)/);
+    if (fileMatch) {
+      if (method === 'GET') {
+        const filePath = decodeURIComponent(fileMatch[3]);
+        return new Response(JSON.stringify({
+          name: filePath.split('/').pop(),
+          path: filePath,
+          sha: 'file_sha_1234567890abcdef',
+          size: 120,
+          type: 'file',
+          content: Buffer.from('# Test notes content').toString('base64'),
+          encoding: 'base64',
+        }), { status: 200 });
+      }
+      if (method === 'DELETE') {
+        return new Response(JSON.stringify({
+          commit: {
+            sha: 'del_commit_1234567890abcdef1234567890abcdef12',
+            message: parsedBody?.message,
+          },
+          content: null,
+        }), { status: 200 });
       }
     }
 
@@ -1224,6 +1367,139 @@ async function runTests() {
       !dbHasExpOnly &&
       addNonEnrolledExp.data.error?.includes('尚未註冊為本課程成員'),
       '35. 實驗新增未加入課程之學生帳號時回傳 400 Bad Request 阻絕，且無殘留資料'
+    );
+
+    // ====================================================
+    // ▶ [測試組 6: Repository 管理、撤銷協作者與透明 Commit 身分]
+    // ====================================================
+
+    // 36. GET /api/courses/:id/repository 回傳儲存庫資訊與遠端中繼資料
+    const getCourseRepo = await api(`/courses/${courseAId}/repository`, {
+      method: 'GET',
+      headers: adminCookie,
+    });
+    assertTest(
+      getCourseRepo.status === 200 &&
+      getCourseRepo.data.repository === 'Lorin1470/course-a-repo' &&
+      getCourseRepo.data.remote?.default_branch === 'main',
+      '36. GET /api/courses/:id/repository 回傳儲存庫資訊與遠端中繼資料'
+    );
+
+    // 37. POST /api/courses/:id/repository/unbind 成功解除綁定（保留遠端庫，不呼叫 GitHub DELETE）
+    const deleteCallsBefore = mockGitHub.apiCalls.filter((c) => c.method === 'DELETE').length;
+    const unbindRes = await api(`/courses/${courseAId}/repository/unbind`, {
+      method: 'POST',
+      headers: adminCookie,
+    });
+    const deleteCallsAfter = mockGitHub.apiCalls.filter((c) => c.method === 'DELETE').length;
+    assertTest(
+      unbindRes.status === 200 &&
+      mockD1.courses.get(courseAId).github_repository === null &&
+      deleteCallsBefore === deleteCallsAfter,
+      '37. POST /api/courses/:id/repository/unbind 成功解除綁定且完全未刪除遠端儲存庫'
+    );
+
+    // 38. POST /api/courses/:id/repository (重新綁定/配置) 成功綁定新儲存庫
+    const bindRes = await api(`/courses/${courseAId}/repository`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ repository: 'Lorin1470/course-a-repo', private: true }),
+    });
+    assertTest(
+      bindRes.status === 200 &&
+      bindRes.data.repository === 'Lorin1470/course-a-repo' &&
+      mockD1.courses.get(courseAId).github_repository === 'Lorin1470/course-a-repo',
+      '38. POST /api/courses/:id/repository 成功重新綁定儲存庫'
+    );
+
+    // 39. POST /api/courses/:id/repository/delete 刪除遠端庫：名稱不符遭 400 阻絕
+    const delMismatchRes = await api(`/courses/${courseAId}/repository/delete`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ confirm_name: 'wrong-name' }),
+    });
+    assertTest(
+      delMismatchRes.status === 400 &&
+      delMismatchRes.data.error?.includes('確認名稱與目標儲存庫全名不符'),
+      '39. 刪除遠端庫若確認名稱不相符遭 400 阻絕'
+    );
+
+    // 40. POST /api/courses/:id/repository/delete 當 GitHub 缺乏 admin 權限 (403) 時誠實回報，不假造成功
+    mockGitHub.shouldFailRepoDelete = true;
+    const delRepoFailRes = await api(`/courses/${courseAId}/repository/delete`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ confirm_name: 'Lorin1470/course-a-repo' }),
+    });
+    mockGitHub.shouldFailRepoDelete = false;
+    assertTest(
+      delRepoFailRes.status === 403 &&
+      delRepoFailRes.data.error?.includes('Administration: write') &&
+      mockD1.courses.get(courseAId).github_repository === 'Lorin1470/course-a-repo',
+      '40. GitHub 回傳 403 時誠實回報錯誤與手動刪除指引，絕無偽造刪除成功'
+    );
+
+    // 41. POST /api/courses/:id/members/:memberId/revoke 撤銷協作者 (多專案安全保留 Safe Retention)
+    let revokeAliceId = null;
+    for (const m of mockD1.courseMemberships.values()) {
+      if (m.username === 'alice_chen' && m.course_id === courseAId) revokeAliceId = m.id;
+    }
+    const revokeRes = await api(`/courses/${courseAId}/members/${revokeAliceId}/revoke`, {
+      method: 'POST',
+      headers: adminCookie,
+    });
+    assertTest(
+      revokeRes.status === 200 &&
+      revokeRes.data.revoke?.status === 'removed',
+      '41. 成功呼叫撤銷協作者權限 API 並同步移除 GitHub 協作者'
+    );
+
+    // 42. 在 Course Mode 下呼叫實驗層級 revoke 會被 400 擋下，提示應由課程層級撤銷
+    let expMemberId = null;
+    for (const m of mockD1.experimentMemberships.values()) {
+      if (m.experiment_id === expC1Id) expMemberId = m.id;
+    }
+    mockD1.experiments.get(expC1Id).course_id = courseAId; // 暫時設置為 courseA (course mode)
+    const expRevokeCourseMode = await api(`/experiments/${expC1Id}/members/${expMemberId}/revoke`, {
+      method: 'POST',
+      headers: adminCookie,
+    });
+    mockD1.experiments.get(expC1Id).course_id = courseCId; // 復原為 courseC
+    assertTest(
+      expRevokeCourseMode.status === 400 &&
+      expRevokeCourseMode.data.error?.includes('Course Mode 下，GitHub Repository 權限屬於課程層級'),
+      '42. Course Mode 下實驗層級 revoke 被阻絕 (400)，嚴格由課程層級統一管理'
+    );
+
+    // 43. DELETE /api/experiments/:id/workspace/file 企圖刪除 raw/* 遭 403 聖域鐵律阻絕
+    const delRawRes = await api(`/experiments/${expC1Id}/workspace/file`, {
+      method: 'DELETE',
+      headers: adminCookie,
+      body: JSON.stringify({ path: 'raw/measurements.csv' }),
+    });
+    assertTest(
+      delRawRes.status === 403 &&
+      delRawRes.data.error?.includes('Raw sanctuary violation'),
+      '43. DELETE 工作區檔案若路徑為 raw/* 遭 403 聖域鐵律嚴格阻絕'
+    );
+
+    // 44. DELETE /api/experiments/:id/workspace/file 正常檔案刪除成功，包含透明 Bot 身分代理紀錄
+    const delNormalRes = await api(`/experiments/${expC1Id}/workspace/file`, {
+      method: 'DELETE',
+      headers: adminCookie,
+      body: JSON.stringify({ path: 'notes.md', message: '刪除過期筆記' }),
+    });
+    const latestDelLog = mockD1.activityLogs[mockD1.activityLogs.length - 1];
+    let delLogDetails = null;
+    try {
+      if (latestDelLog?.details_json) delLogDetails = JSON.parse(latestDelLog.details_json);
+    } catch {}
+    assertTest(
+      delNormalRes.status === 200 &&
+      delNormalRes.data.action === 'file_deleted' &&
+      latestDelLog?.action === 'file_deleted' &&
+      delLogDetails?.execution_mode === 'bot_delegated',
+      '44. DELETE 工作區檔案成功，並以透明 Bot 代為執行寫入稽核日誌'
     );
 
   } finally {
