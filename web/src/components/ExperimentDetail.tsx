@@ -193,11 +193,20 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     }
   }, [activeTab, loadReport]);
 
-  // 權限判斷：只要是課程或實驗協作者，皆具備操作與管理權限
+  // 權限判斷：
+  // 1. 協作者 (所有成員含學生，具備讀取、工作區操作與報告撰寫權限)
   const isCollaborator = Boolean(
     userRole ||
     course?.role ||
     (user && members.some((m) => String(m.github_id) === String(user.github_id) && m.status === 'active'))
+  );
+  // 2. 實驗管理者 (教師、助教、課程建立者，具備成員指派、實驗設定與儲存庫管理權限)
+  const isManager = Boolean(
+    userRole === 'teacher' ||
+    userRole === 'assistant' ||
+    course?.role === 'teacher' ||
+    course?.role === 'assistant' ||
+    (user && course?.created_by_github_id && String(course.created_by_github_id) === String(user.github_id))
   );
 
   // Modal 控制
@@ -748,19 +757,21 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
 
           <div className="flex items-center space-x-2 self-end md:self-auto flex-wrap">
             {isCollaborator && (
-              <>
-                <button
-                  onClick={() => {
-                    loadProvisionHistory();
-                    setIsHistoryOpen(true);
-                  }}
-                  className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
-                  title="檢視 GitHub 儲存庫建立紀錄"
-                >
-                  <History className="w-3.5 h-3.5" />
-                  <span>建立歷程</span>
-                </button>
+              <button
+                onClick={() => {
+                  loadProvisionHistory();
+                  setIsHistoryOpen(true);
+                }}
+                className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                title="檢視 GitHub 儲存庫建立紀錄"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>建立歷程</span>
+              </button>
+            )}
 
+            {isManager && (
+              <>
                 {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
                   <button
                     onClick={handleProvision}
@@ -884,7 +895,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                     </p>
                   </div>
                 </div>
-                {isCollaborator && (
+                {isManager && (
                   <button
                     onClick={handleProvision}
                     disabled={isProvisioning}
@@ -907,13 +918,13 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                     </p>
                     <p className="text-amber-800 mt-0.5">
                       目標儲存庫：<span className="font-mono font-semibold">{resolvedRepo}</span>。
-                      {isCollaborator
-                        ? ' 協作者可直接點擊右側按鈕，系統將自動透過 GitHub App 與官方範本初始化該儲存庫。'
-                        : ' 此實驗專案尚未在 GitHub 上初始化，請待專案協作者完成遠端儲存庫建立。'}
+                      {isManager
+                        ? ' 管理者可直接點擊右側按鈕，系統將自動透過 GitHub App 與官方範本初始化該儲存庫。'
+                        : ' 此實驗專案尚未在 GitHub 上初始化，請待專案教師或助教完成遠端儲存庫建立。'}
                     </p>
                   </div>
                 </div>
-                {isCollaborator && (
+                {isManager && (
                   <button
                     onClick={handleProvision}
                     disabled={isProvisioning}
@@ -1207,7 +1218,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 指派至本實驗的組員清單（必須為所屬課程的 Active 成員）。
               </p>
 
-              {isCollaborator && (
+              {isManager && (
                 <button
                   onClick={() => {
                     setModalError(null);
@@ -1238,7 +1249,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                         <th className="px-5 py-3">組別 (Group)</th>
                         <th className="px-5 py-3">狀態</th>
                         <th className="px-5 py-3">GitHub 權限</th>
-                        {isCollaborator && <th className="px-5 py-3 text-right">操作</th>}
+                        {isManager && <th className="px-5 py-3 text-right">操作</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1297,7 +1308,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                                     <RefreshCw className={`w-3 h-3 ${syncingMemberId === m.id ? 'animate-spin' : ''}`} />
                                     <span>{syncingMemberId === m.id ? '同步處理中' : '待同步 / 同步中'}</span>
                                   </span>
-                                  {isCollaborator && (
+                                  {isManager && (
                                     <button
                                       onClick={() => handleRetrySync(m)}
                                       disabled={syncingMemberId === m.id}
@@ -1316,7 +1327,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                                   >
                                     <span>✗ 同步失敗</span>
                                   </span>
-                                  {isCollaborator && (
+                                  {isManager && (
                                     <button
                                       onClick={() => handleRetrySync(m)}
                                       disabled={syncingMemberId === m.id}
@@ -1338,7 +1349,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                                 <span className="text-xs text-slate-400">待同步</span>
                               )}
                             </td>
-                            {isCollaborator && (
+                            {isManager && (
                               <td className="px-5 py-3.5 text-right whitespace-nowrap space-x-2">
                                 <button
                                   onClick={() => {
@@ -1388,7 +1399,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                       })}
                       {members.length === 0 && (
                         <tr>
-                          <td colSpan={isCollaborator ? 7 : 6} className="text-center py-8 text-slate-400 text-xs">
+                          <td colSpan={isManager ? 7 : 6} className="text-center py-8 text-slate-400 text-xs">
                             目前尚未指派成員至本實驗專案
                           </td>
                         </tr>
@@ -1480,7 +1491,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                     </div>
                   </div>
 
-                  {!isCourseMode && isCollaborator && (
+                  {!isCourseMode && isManager && (
                     <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
                       <div className="text-xs text-slate-500">
                         可自由解除綁定或刪除遠端儲存庫。解除綁定將保留 GitHub 上的程式庫。
@@ -1515,7 +1526,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   <p className="text-xs text-slate-500 max-w-sm mx-auto">
                     您可以在此綁定既有的 GitHub 儲存庫，或透過官方範本自動建立全新的實驗專屬儲存庫。
                   </p>
-                  {!isCourseMode && isCollaborator && (
+                  {!isCourseMode && isManager && (
                     <div className="pt-2">
                       <button
                         onClick={() => {

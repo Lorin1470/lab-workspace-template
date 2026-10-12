@@ -127,9 +127,39 @@ export async function isCourseMember(env: Env, courseId: string, githubId: strin
   return !!mem;
 }
 
-// 相容別名：平權化架構下，所有 active 成員皆具備協作管理能力
+// 檢查使用者是否具備該課程之管理權限 (Teacher / Assistant / Course Creator / Bootstrap Admin)
+export async function isCourseManager(env: Env, courseId: string, githubId: string): Promise<boolean> {
+  if (!env.DB || !courseId || !githubId) return false;
+  // 1. 檢查是否為該課程之 active teacher 或 assistant
+  const stmt = env.DB.prepare(
+    'SELECT id, role, status FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"'
+  ).bind(courseId, githubId);
+  const mem: any = await safeD1First(stmt);
+  if (mem && (mem.role === 'teacher' || mem.role === 'assistant')) {
+    return true;
+  }
+  // 2. 檢查是否為該課程之建立者
+  const course: any = await safeD1First(env.DB.prepare('SELECT created_by_github_id FROM courses WHERE id = ?').bind(courseId));
+  if (course && String(course.created_by_github_id) === String(githubId)) {
+    return true;
+  }
+  // 3. 系統初始管理員
+  if (env.INITIAL_ADMIN_GITHUB_ID && String(env.INITIAL_ADMIN_GITHUB_ID) === String(githubId)) {
+    return true;
+  }
+  // 4. 緊急復原機制：若課程中已無任何 active teacher，允許同課程之 active 成員進行應急管理避免死鎖
+  const activeTeachers: any = await safeD1First(
+    env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE course_id = ? AND role = "teacher" AND status = "active"').bind(courseId)
+  );
+  if (activeTeachers && Number(activeTeachers.count) === 0 && mem && mem.status === 'active') {
+    return true;
+  }
+  return false;
+}
+
+// 別名：教師與助教具備課程管理權限
 export async function isCourseTeacher(env: Env, courseId: string, githubId: string): Promise<boolean> {
-  return isCourseMember(env, courseId, githubId);
+  return isCourseManager(env, courseId, githubId);
 }
 
 // 檢查使用者是否具備建立新課程權限 (任何已登入使用者皆可建立工作區)
@@ -366,14 +396,18 @@ export async function resolveExperimentPermission(
       } else if (courseMember.role === 'assistant' && resolvedRole !== 'teacher') {
         resolvedRole = 'assistant';
       } else if (courseMember.role === 'student' && resolvedRole === 'guest') {
-        // 重要業務規則：Course member 但尚未分組至該 Experiment，不得存取該 Experiment
-        return {
-          allowed: false,
-          role: 'guest',
-          reason: 'Access denied: Enrolled in course but not assigned to this experiment',
-          course,
-          experiment: exp,
-        };
+        if (course?.mode === 'course') {
+          resolvedRole = 'student';
+        } else {
+          // 重要業務規則：Course member 但尚未分組至該 Experiment，不得存取該 Experiment
+          return {
+            allowed: false,
+            role: 'guest',
+            reason: 'Access denied: Enrolled in course but not assigned to this experiment',
+            course,
+            experiment: exp,
+          };
+        }
       }
     }
   }
@@ -597,9 +631,30 @@ export const onRequest = async (context: any) => {
             sql += 'repo_name = ?';
             binds.push(repo);
           } else if (courseId) {
-            const courseRow: any = await safeD1First(env.DB.prepare('SELECT github_repository FROM courses WHERE id = ?').bind(courseId));
-            const expRows: any = await env.DB.prepare('SELECT repository FROM experiments WHERE course_id = ? AND repository IS NOT NULL').bind(courseId).all().catch(() => ({ results: [] }));
-            const repos = Array.from(new Set([courseRow?.github_repository, ...(expRows?.results || []).map((r: any) => r.repository)].filter(Boolean)));
+            const courseRow: any = await safeD1First(env.DB.prepare('SELECT id, mode, github_repository FROM courses WHERE id = ?').bind(courseId));
+            const sessionUser = await getSessionUser(request, env);
+            const isManager = sessionUser ? await isCourseManager(env, courseId, sessionUser.github_id) : false;
+            let expRows: any = { results: [] };
+            if (isManager) {
+              expRows = await env.DB.prepare('SELECT repository FROM experiments WHERE course_id = ? AND repository IS NOT NULL').bind(courseId).all().catch(() => ({ results: [] }));
+            } else if (sessionUser) {
+              expRows = await env.DB.prepare(
+                `SELECT e.repository FROM experiments e
+                 JOIN experiment_memberships em ON e.id = em.experiment_id
+                 WHERE e.course_id = ? AND em.github_id = ? AND em.status = 'active' AND e.repository IS NOT NULL`
+              ).bind(courseId, sessionUser.github_id).all().catch(() => ({ results: [] }));
+            }
+            const allowedRepos: string[] = [];
+            if (courseRow?.mode === 'course' && courseRow?.github_repository) {
+              allowedRepos.push(courseRow.github_repository);
+            }
+            if (isManager && courseRow?.github_repository) {
+              allowedRepos.push(courseRow.github_repository);
+            }
+            for (const r of (expRows?.results || [])) {
+              if (r.repository) allowedRepos.push(r.repository);
+            }
+            const repos = Array.from(new Set(allowedRepos.filter(Boolean)));
             if (repos.length === 0) {
               return new Response(JSON.stringify({ success: true, logs: [] }), { headers });
             }
@@ -1257,6 +1312,10 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'PATCH') {
+        const isManager = await isCourseManager(env, courseId, sessionUser.github_id);
+        if (!isManager) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can update course' }), { status: 403, headers });
+        }
 
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== 'object') {
@@ -1352,8 +1411,9 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
-        if (!isMember) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage course members' }), { status: 403, headers });
+        const isManager = await isCourseManager(env, courseId, sessionUser.github_id);
+        if (!isManager) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can manage course members' }), { status: 403, headers });
         }
 
         if (course.status !== 'active') {
@@ -1472,9 +1532,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
 
-      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage course members' }), { status: 403, headers });
+      const isManager = await isCourseManager(env, courseId, sessionUser.github_id);
+      if (!isManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can manage course members' }), { status: 403, headers });
       }
 
       // IDOR 防護 2: 嚴格比對 memberId 與 courseId，找不到或不匹配一律 404 (防止洩漏其他課程成員存在性)
@@ -1583,9 +1643,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
 
-      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage permissions' }), { status: 403, headers });
+      const isManager = await isCourseManager(env, courseId, sessionUser.github_id);
+      if (!isManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can manage permissions' }), { status: 403, headers });
       }
 
       const targetMem: any = await safeD1First(
@@ -1643,9 +1703,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
 
-      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage permissions' }), { status: 403, headers });
+      const isManager = await isCourseManager(env, courseId, sessionUser.github_id);
+      if (!isManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can manage permissions' }), { status: 403, headers });
       }
 
       const targetMem: any = await safeD1First(
@@ -1731,6 +1791,11 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
+        const isManager = await isCourseManager(env, courseId, sessionUser.github_id);
+        if (!isManager) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can configure course repository' }), { status: 403, headers });
+        }
+
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== 'object') {
           return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
@@ -1825,9 +1890,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
 
-      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage repository settings' }), { status: 403, headers });
+      const isManager = await isCourseManager(env, courseId, sessionUser.github_id);
+      if (!isManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can manage repository settings' }), { status: 403, headers });
       }
 
       if (!course.github_repository) {
@@ -1873,9 +1938,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
 
-      const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can delete repository' }), { status: 403, headers });
+      const isDeleteManager = await isCourseManager(env, courseId, sessionUser.github_id);
+      if (!isDeleteManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can delete repository' }), { status: 403, headers });
       }
 
       if (!course.github_repository) {
@@ -1971,10 +2036,10 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ error: `Cannot create experiment in a ${course.status} course` }), { status: 400, headers });
         }
 
-        // 檢查建立者是否為該課程成員 (Collaborator)
-        const isMember = await isCourseMember(env, course_id, sessionUser.github_id);
-        if (!isMember) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only course members can create experiments' }), { status: 403, headers });
+        // 檢查建立者是否為該課程管理者 (Teacher / Assistant / Creator)
+        const isManager = await isCourseManager(env, course_id, sessionUser.github_id);
+        if (!isManager) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can create experiments' }), { status: 403, headers });
         }
 
         let expRepository: string | null = null;
@@ -2138,6 +2203,11 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'PATCH') {
+        const isManager = await isCourseManager(env, exp.course_id, sessionUser.github_id);
+        if (!isManager) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can update experiment' }), { status: 403, headers });
+        }
+
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== 'object') {
           return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
@@ -2217,9 +2287,9 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
-        const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
-        if (!isMember) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only course members can assign members to experiments' }), { status: 403, headers });
+        const isManager = await isCourseManager(env, exp.course_id, sessionUser.github_id);
+        if (!isManager) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can assign members to experiments' }), { status: 403, headers });
         }
 
         const expCourse: any = await safeD1First(env.DB.prepare('SELECT id, status, mode, github_repository FROM courses WHERE id = ?').bind(exp.course_id));
@@ -2347,9 +2417,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage experiment members' }), { status: 403, headers });
+      const isManager = await isCourseManager(env, exp.course_id, sessionUser.github_id);
+      if (!isManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can manage experiment members' }), { status: 403, headers });
       }
 
       // IDOR 防護：嚴格限定 memberId 與 expId 匹配，不匹配或不存在一律 404
@@ -2452,9 +2522,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage permissions' }), { status: 403, headers });
+      const isManager = await isCourseManager(env, exp.course_id, sessionUser.github_id);
+      if (!isManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can manage permissions' }), { status: 403, headers });
       }
 
       const targetMem: any = await safeD1First(
@@ -2515,9 +2585,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Experiment not found' }), { status: 404, headers });
       }
 
-      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage permissions' }), { status: 403, headers });
+      const isManager = await isCourseManager(env, exp.course_id, sessionUser.github_id);
+      if (!isManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can manage permissions' }), { status: 403, headers });
       }
 
       const targetMem: any = await safeD1First(
@@ -2632,6 +2702,11 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
+        const isManager = await isCourseManager(env, exp.course_id, sessionUser.github_id);
+        if (!isManager) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can configure repository' }), { status: 403, headers });
+        }
+
         if (course?.mode === 'course') {
           return new Response(JSON.stringify({
             error: '本課程為 Course Mode（課程共用儲存庫），實驗不可單獨配置儲存庫。請至課程設定管理共用儲存庫。',
@@ -2739,9 +2814,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course Mode 使用課程共用儲存庫，無法在實驗層級解除綁定。' }), { status: 400, headers });
       }
 
-      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can manage repository settings' }), { status: 403, headers });
+      const isManager = await isCourseManager(env, exp.course_id, sessionUser.github_id);
+      if (!isManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can manage repository settings' }), { status: 403, headers });
       }
 
       if (!exp.repository) {
@@ -2793,9 +2868,9 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Course Mode 之儲存庫為全課程共用，無法從實驗刪除。' }), { status: 400, headers });
       }
 
-      const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
-      if (!isMember) {
-        return new Response(JSON.stringify({ error: 'Forbidden: Only course members can delete repository' }), { status: 403, headers });
+      const isDeleteManager = await isCourseManager(env, exp.course_id, sessionUser.github_id);
+      if (!isDeleteManager) {
+        return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can delete repository' }), { status: 403, headers });
       }
 
       if (!exp.repository) {
@@ -2903,10 +2978,10 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
-        // 檢查操作者是否為該課程成員 (Collaborator)
-        const isMember = await isCourseMember(env, exp.course_id, sessionUser.github_id);
-        if (!isMember) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Only course members can provision repositories' }), { status: 403, headers });
+        // 檢查操作者是否為該課程管理者 (Teacher / Assistant / Creator)
+        const isManager = await isCourseManager(env, exp.course_id, sessionUser.github_id);
+        if (!isManager) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only course managers can provision repositories' }), { status: 403, headers });
         }
 
         // 檢查課程狀態是否為 active

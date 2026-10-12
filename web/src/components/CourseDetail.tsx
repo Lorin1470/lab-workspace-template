@@ -87,8 +87,13 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
   const [members, setMembers] = useState<CourseMembership[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 權限判斷：只要是課程成員（擁有 active 角色），皆具備協作者操作與管理權限
+  // 權限判斷：協作者（所有具角色成員）與管理者（教師、助教、建立者）
   const isCollaborator = !!course.role;
+  const isManager = Boolean(
+    course.role === 'teacher' ||
+    course.role === 'assistant' ||
+    (user && course.created_by_github_id && String(course.created_by_github_id) === String(user.github_id))
+  );
 
   // Modal 狀態
   const [isEditCourseOpen, setIsEditCourseOpen] = useState(false);
@@ -534,7 +539,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
 
-            {isCollaborator && (
+            {isManager && (
               <button
                 onClick={() => {
                   setModalError(null);
@@ -625,7 +630,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                 : '實驗模式：各實驗專案各自綁定獨立的 GitHub Repository 與 Git 工作區。'}
             </p>
 
-            {isCollaborator && course.status === 'active' && (
+            {isManager && course.status === 'active' && (
               <button
                 onClick={() => {
                   setModalError(null);
@@ -723,7 +728,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
               課程成員名單作為 Web 權限唯一的權威依據（D1 Course Membership Authority）。
             </p>
 
-            {isCollaborator && course.status === 'active' && (
+            {isManager && course.status === 'active' && (
               <button
                 onClick={() => {
                   setModalError(null);
@@ -748,7 +753,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                     <th className="px-5 py-3">狀態</th>
                     <th className="px-5 py-3">GitHub 權限</th>
                     <th className="px-5 py-3">加入時間</th>
-                    {isCollaborator && <th className="px-5 py-3 text-right">操作</th>}
+                    {isManager && <th className="px-5 py-3 text-right">操作</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -811,7 +816,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                                 <RefreshCw className={`w-3 h-3 ${syncingMemberId === m.id ? 'animate-spin' : ''}`} />
                                 <span>{syncingMemberId === m.id ? '同步處理中' : '待同步 / 同步中'}</span>
                               </span>
-                              {isCollaborator && (
+                              {isManager && (
                                 <button
                                   onClick={() => handleRetrySync(m)}
                                   disabled={syncingMemberId === m.id}
@@ -830,7 +835,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                               >
                                 <span>✗ 同步失敗</span>
                               </span>
-                              {isCollaborator && (
+                              {isManager && (
                                 <button
                                   onClick={() => handleRetrySync(m)}
                                   disabled={syncingMemberId === m.id}
@@ -855,7 +860,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                         <td className="px-5 py-3.5 text-xs text-slate-400">
                           {m.created_at?.slice(0, 10)}
                         </td>
-                        {isCollaborator && (
+                        {isManager && (
                           <td className="px-5 py-3.5 text-right whitespace-nowrap space-x-2">
                             <button
                               onClick={() => {
@@ -895,7 +900,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   })}
                   {members.length === 0 && (
                     <tr>
-                      <td colSpan={isCollaborator ? 7 : 6} className="text-center py-8 text-slate-400 text-xs">
+                      <td colSpan={isManager ? 7 : 6} className="text-center py-8 text-slate-400 text-xs">
                         目前尚無任何成員
                       </td>
                     </tr>
@@ -984,7 +989,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                   </div>
                 )}
 
-                {isCollaborator && (
+                {isManager && (
                   <div className="border-t border-slate-200 pt-4 flex flex-wrap items-center gap-3 justify-end">
                     <button
                       onClick={() => setIsUnbindRepoOpen(true)}
@@ -1020,7 +1025,7 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                     綁定儲存庫後，系統將自動為本課程學生同步 GitHub 協作者權限，並啟用完整的 Git 工作區與檔案協作功能。
                   </p>
                 </div>
-                {isCollaborator && (
+                {isManager && (
                   <button
                     onClick={() => {
                       setBindRepoName('');

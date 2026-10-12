@@ -138,6 +138,8 @@ async function runTests() {
   const baseUrl = `http://127.0.0.1:${port}/api/activity`;
   let passCount = 0;
   let failCount = 0;
+  let testBDir = null;
+  let cleanupTestB = false;
 
   function assert(condition, message) {
     if (condition) {
@@ -600,9 +602,16 @@ async function runTests() {
     // 測試 18: 在 test-b-lab-02 目錄下執行母倉庫 log-activity.mjs (不提供 --repo)
     // ----------------------------------------------------
     console.log('\n▶ [測試 18] 在 test-b-lab-02 目錄下執行 CLI 自動推導 repo');
-    const testBDir = '/Users/kuanggou/Documents/code/test-b-lab-02';
+    testBDir = '/Users/kuanggou/Documents/code/test-b-lab-02';
+    if (!fs.existsSync(testBDir)) {
+      testBDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-test-b-'));
+      cleanupTestB = true;
+      execSync('git init', { cwd: testBDir, stdio: 'ignore' });
+      execSync('git remote add origin https://github.com/Lorin1470/test-b-lab-02.git', { cwd: testBDir, stdio: 'ignore' });
+      fs.writeFileSync(path.join(testBDir, 'config.yml'), 'experiment_id: lab-02\n');
+    }
     const { stdout: cliTestBOut } = await execFileAsync(
-      'node',
+      process.execPath,
       [
         cliPath,
         '--actor',
@@ -644,7 +653,7 @@ async function runTests() {
       let nonGhFailed = false;
       let nonGhErr = '';
       try {
-        await execFileAsync('node', [cliPath, '--action', 'request_proposal', '--summary', '非 github 測試'], {
+        await execFileAsync(process.execPath, [cliPath, '--action', 'request_proposal', '--summary', '非 github 測試'], {
           cwd: tmpNonGh,
           env: { ...process.env, ACTIVITY_LOG_API_URL: baseUrl, ACTIVITY_LOG_SECRET: TEST_SECRET },
         });
@@ -667,7 +676,7 @@ async function runTests() {
       let noOriginFailed = false;
       let noOriginErr = '';
       try {
-        await execFileAsync('node', [cliPath, '--action', 'request_proposal', '--summary', '無 origin 測試'], {
+        await execFileAsync(process.execPath, [cliPath, '--action', 'request_proposal', '--summary', '無 origin 測試'], {
           cwd: tmpNoOrigin,
           env: { ...process.env, ACTIVITY_LOG_API_URL: baseUrl, ACTIVITY_LOG_SECRET: TEST_SECRET },
         });
@@ -685,7 +694,7 @@ async function runTests() {
     // ----------------------------------------------------
     console.log('\n▶ [測試 22] --repo 明確指定時優先覆蓋');
     const { stdout: cliOverrideOut } = await execFileAsync(
-      'node',
+      process.execPath,
       [
         cliPath,
         '--repo',
@@ -710,6 +719,9 @@ async function runTests() {
     const recOverride = mockD1.records[mockD1.records.length - 1];
     assert(recOverride && recOverride.repo_name === 'CustomOrg/overridden-lab-repo', `repo_name 應為明確指定的 CustomOrg/overridden-lab-repo (實際: ${recOverride?.repo_name})`);
   } finally {
+    if (cleanupTestB && testBDir) {
+      try { fs.rmSync(testBDir, { recursive: true, force: true }); } catch {}
+    }
     server.close();
   }
 

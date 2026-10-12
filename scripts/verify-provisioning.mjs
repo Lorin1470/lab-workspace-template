@@ -708,8 +708,16 @@ async function runTests() {
       headers: { Cookie: `app_session=${STRANGER_SID}` },
     });
     assert.strictEqual(resStranger.status, 403);
-    assert.ok(resStranger.json.error.includes('Only course members'));
+    assert.ok(resStranger.json.error.includes('Only course managers') || resStranger.json.error.includes('Only course members'));
     pass('非課程成員嘗試觸發 Provisioning 回傳 403 Forbidden');
+
+    // 3.3 學生嘗試觸發 -> 403 Forbidden
+    const resStudent = await api('/experiments/e_comm_1/provision', {
+      method: 'POST',
+      headers: { Cookie: `app_session=${STUDENT_SID}` },
+    });
+    assert.strictEqual(resStudent.status, 403);
+    pass('學生嘗試觸發 Provisioning 回傳 403 Forbidden');
 
     // 3.4 不存在的實驗 -> 404
     const resNotFound = await api('/experiments/exp_not_exist/provision', {

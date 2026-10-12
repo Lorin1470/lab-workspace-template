@@ -389,6 +389,17 @@ class MockCollabD1 {
             return null;
           }
 
+          if (q.includes('COUNT(*) as count FROM course_memberships')) {
+            const cid = binds[0];
+            let count = 0;
+            for (const cm of this.courseMemberships.values()) {
+              if ((!cid || cm.course_id === cid) && cm.role === 'teacher' && cm.status === 'active') {
+                count++;
+              }
+            }
+            return { count };
+          }
+
           return null;
         },
 
@@ -1500,6 +1511,148 @@ async function runTests() {
       latestDelLog?.action === 'file_deleted' &&
       delLogDetails?.execution_mode === 'bot_delegated',
       '44. DELETE 工作區檔案成功，並以透明 Bot 代為執行寫入稽核日誌'
+    );
+
+    // 建立學生 Carol Session (github_id: 2003, 在 Course B 為 active student)
+    const carolMemberId = addCarolB.data.member.id;
+    const carolSessionToken = 'carol-token.test456';
+    const carolHashed = sha256(carolSessionToken);
+    mockD1.sessions.set(carolHashed, {
+      session_id: carolHashed,
+      github_id: '2003',
+      username: 'carol_white',
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    });
+    const carolCookie = { Cookie: `app_session=${carolSessionToken}` };
+
+    // 建立學生 Bob Session (github_id: 2002)
+    const bobSessionToken = 'bob-token.test789';
+    const bobHashed = sha256(bobSessionToken);
+    mockD1.sessions.set(bobHashed, {
+      session_id: bobHashed,
+      github_id: '2002',
+      username: 'bob_jones',
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    });
+    const bobCookie = { Cookie: `app_session=${bobSessionToken}` };
+
+    // 建立學生 Kevin Session (github_id: 3001, 在 Exp C1 為 active student)
+    const kevinSessionToken = 'kevin-token.test999';
+    const kevinHashed = sha256(kevinSessionToken);
+    mockD1.sessions.set(kevinHashed, {
+      session_id: kevinHashed,
+      github_id: '3001',
+      username: 'new_student_kevin',
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    });
+    const kevinCookie = { Cookie: `app_session=${kevinSessionToken}` };
+
+    // 45. 未登入請求管理端點一律回傳 401 Unauthorized
+    const unauthDelRepo = await api(`/courses/${courseAId}/repository/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ repository_confirmation: 'Lorin1470/course-a-repo' }),
+    });
+    assertTest(
+      unauthDelRepo.status === 401,
+      '45. 未登入存取危險管理端點遭 401 Unauthorized 阻絕'
+    );
+
+    // 46. 學生 Carol 企圖刪除課程儲存庫遭 403 阻絕
+    const studentDelRepo = await api(`/courses/${courseBId}/repository/delete`, {
+      method: 'POST',
+      headers: carolCookie,
+      body: JSON.stringify({ repository_confirmation: 'Lorin1470/course-b-repo' }),
+    });
+    assertTest(
+      studentDelRepo.status === 403,
+      '46. 學生企圖刪除課程儲存庫遭 403 Forbidden 嚴格阻絕'
+    );
+
+    // 47. 學生 Carol 企圖解除綁定課程儲存庫遭 403 阻絕
+    const studentUnbindRepo = await api(`/courses/${courseBId}/repository/unbind`, {
+      method: 'POST',
+      headers: carolCookie,
+    });
+    assertTest(
+      studentUnbindRepo.status === 403,
+      '47. 學生企圖解除綁定課程儲存庫遭 403 Forbidden 嚴格阻絕'
+    );
+
+    // 48. 學生 Carol 企圖修改課程資訊遭 403 阻絕
+    const studentPatchCourse = await api(`/courses/${courseBId}`, {
+      method: 'PATCH',
+      headers: carolCookie,
+      body: JSON.stringify({ name: 'Tampered Course Name' }),
+    });
+    assertTest(
+      studentPatchCourse.status === 403,
+      '48. 學生企圖修改課程設定遭 403 Forbidden 嚴格阻絕'
+    );
+
+    // 49. 學生 Carol 企圖提權自己為教師遭 403 阻絕
+    const studentEscalate = await api(`/courses/${courseBId}/members/${carolMemberId}`, {
+      method: 'PATCH',
+      headers: carolCookie,
+      body: JSON.stringify({ role: 'teacher' }),
+    });
+    assertTest(
+      studentEscalate.status === 403,
+      '49. 學生企圖修改成員角色與提權遭 403 Forbidden 嚴格阻絕'
+    );
+
+    // 50. 學生 Kevin 企圖刪除實驗專屬儲存庫遭 403 阻絕
+    const studentDelExpRepo = await api(`/experiments/${expC1Id}/repository/delete`, {
+      method: 'POST',
+      headers: kevinCookie,
+      body: JSON.stringify({ repository_confirmation: 'Lorin1470/exp-c1-repo' }),
+    });
+    assertTest(
+      studentDelExpRepo.status === 403,
+      '50. 學生企圖刪除實驗專屬儲存庫遭 403 Forbidden 嚴格阻絕'
+    );
+
+    // 51. 學生 Kevin 企圖修改實驗設定遭 403 阻絕
+    const studentPatchExp = await api(`/experiments/${expC1Id}`, {
+      method: 'PATCH',
+      headers: kevinCookie,
+      body: JSON.stringify({ name: 'Tampered Exp Name' }),
+    });
+    assertTest(
+      studentPatchExp.status === 403,
+      '51. 學生企圖修改實驗設定遭 403 Forbidden 嚴格阻絕'
+    );
+
+    // 52. 跨課程 IDOR 防護：以 Course A 參數查詢 Course B 成員 ID 回傳 404
+    const idorMemberRes = await api(`/courses/${courseAId}/members/${carolMemberId}`, {
+      method: 'PATCH',
+      headers: adminCookie,
+      body: JSON.stringify({ role: 'assistant' }),
+    });
+    assertTest(
+      idorMemberRes.status === 404,
+      '52. 跨課程 IDOR 竄改成員 URL 參數嚴格回傳 404 Not Found 防護'
+    );
+
+    // 53. Activity Log Anti-Spoofing：POST /api/activity 前端偽造身分遭 Session 強制鎖定
+    const spoofLogRes = await api('/activity', {
+      method: 'POST',
+      headers: carolCookie,
+      body: JSON.stringify({
+        repo_name: 'Lorin1470/course-b-repo',
+        action: 'file_modified',
+        actor_type: 'web',
+        actor_id: 'fake_admin',
+        actor_name: 'Fake Administrator',
+        requested_by: 'fake_admin',
+        summary: '測試偽造身分紀錄',
+      }),
+    });
+    const latestSpoofLog = mockD1.activityLogs[mockD1.activityLogs.length - 1];
+    assertTest(
+      (spoofLogRes.status === 201 || spoofLogRes.status === 200) &&
+      latestSpoofLog?.actor_id === 'carol_white' &&
+      latestSpoofLog?.requested_by === 'carol_white',
+      '53. Activity Log 身分防偽 (Anti-Spoofing)：前端偽造身分被 Session 身分強制鎖定'
     );
 
   } finally {
