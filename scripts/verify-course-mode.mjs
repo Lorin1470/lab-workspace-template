@@ -250,6 +250,18 @@ class MockCourseModeD1 {
             }
             return null;
           }
+          if (q.includes("COUNT(*) as count FROM courses")) {
+            return { count: this.courses.size };
+          }
+          if (q.includes('FROM course_memberships WHERE github_id = ? AND role = "teacher" AND status = "active"')) {
+            const gid = binds[0];
+            for (const cm of this.courseMemberships.values()) {
+              if (cm.github_id === String(gid) && cm.role === "teacher" && cm.status === "active") {
+                return { ...cm };
+              }
+            }
+            return null;
+          }
           if (q.includes("FROM course_memberships WHERE id = ?")) {
             return this.courseMemberships.get(binds[0]) || null;
           }
@@ -604,6 +616,7 @@ async function runCourseModeVerification() {
 
   const env = {
     DB: mockDb,
+    INITIAL_ADMIN_GITHUB_ID: "1001",
     GITHUB_APP_ID: "12345",
     GITHUB_APP_INSTALLATION_ID: "67890",
     GITHUB_APP_PRIVATE_KEY: testKeypair.privateKey,

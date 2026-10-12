@@ -306,6 +306,9 @@ class MockCollabD1 {
         },
 
         first: async () => {
+          if (q.includes('COUNT(*) as count FROM courses')) {
+            return { count: this.courses.size };
+          }
           if (q.includes('FROM user_sessions WHERE session_id = ?')) {
             return projectFields(this.sessions.get(binds[0]), q);
           }
@@ -651,6 +654,7 @@ async function runTests() {
   const env = {
     DB: mockD1,
     ENVIRONMENT: 'test',
+    INITIAL_ADMIN_GITHUB_ID: '1000',
     GITHUB_APP_ID: '123456',
     GITHUB_APP_INSTALLATION_ID: '654321',
     GITHUB_APP_PRIVATE_KEY: testKeypair.privateKey,

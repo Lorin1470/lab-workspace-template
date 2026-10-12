@@ -248,6 +248,9 @@ class MockManagementD1 {
             }
             return null;
           }
+          if (q.includes('COUNT(*) as count FROM courses')) {
+            return { count: this.courses.size };
+          }
           if (q.includes('FROM courses WHERE id = ?')) {
             return this.courses.get(binds[0]) || null;
           }
@@ -597,15 +600,19 @@ async function run() {
       createdCourseId = data.course.id;
       pass('認證使用者成功建立課程工作區 (201)');
 
-      // 1.3 其他認證使用者亦可自主建立其專屬課程工作區
+      // 1.3 一般學生／未獲授權使用者嘗試建立課程遭拒絕 (403 Forbidden)
+      const prevCourseCount = mockD1.courses.size;
+      const prevMemberCount = mockD1.courseMemberships.size;
       const tempUserCookie = createSession({ github_id: '99998', username: 'temp_user' });
       const resTemp = await fetch(`${BASE_URL}/courses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: tempUserCookie },
         body: JSON.stringify({ course_code: 'CS101', name: '計算機概論', semester: '114-1' }),
       });
-      assert.strictEqual(resTemp.status, 201);
-      pass('其他認證使用者自主建立新課程工作區成功 (201，平權無門檻)');
+      assert.strictEqual(resTemp.status, 403);
+      assert.strictEqual(mockD1.courses.size, prevCourseCount, '資料庫不得新增課程');
+      assert.strictEqual(mockD1.courseMemberships.size, prevMemberCount, '資料庫不得新增成員');
+      pass('一般學生／未獲授權使用者建立課程遭伺服器端拒絕 (403 Forbidden，零資料殘留)');
     }
 
     // ----------------------------------------------------
@@ -1185,7 +1192,7 @@ async function run() {
     // ----------------------------------------------------
     console.log('\n▶ [群組 12: 操作者身份防偽 (Anti-Spoofing)]');
     {
-      // 12.1 協作者在 Request Body 企圖偽造他人身份建立課程
+      // 12.1 學生在 Request Body 企圖偽造他人身份建立課程 -> 403 Forbidden 遭阻絕
       const resSpoofCourse = await fetch(`${BASE_URL}/courses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.studentA },
@@ -1196,10 +1203,8 @@ async function run() {
           created_by_github_id: '1001', // 企圖假冒他人
         }),
       });
-      assert.strictEqual(resSpoofCourse.status, 201);
-      const spoofData = await resSpoofCourse.json();
-      assert.strictEqual(spoofData.course.created_by_github_id, '3001');
-      pass('建立課程時，created_by_github_id 強制由伺服器端 Session 綁定 (防偽有效)');
+      assert.strictEqual(resSpoofCourse.status, 403);
+      pass('學生企圖呼叫建立課程 API 遭伺服器端拒絕 (403 Forbidden)');
 
       // 12.2 非課程成員偽造身份企圖新增成員
       const resSpoofAddMember = await fetch(`${BASE_URL}/courses/${createdCourseId}/members`, {

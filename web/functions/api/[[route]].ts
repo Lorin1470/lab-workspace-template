@@ -160,9 +160,37 @@ export async function isCourseTeacher(env: Env, courseId: string, githubId: stri
   return isCourseManager(env, courseId, githubId);
 }
 
-// 檢查使用者是否具備建立新課程權限 (任何已登入使用者皆可建立工作區)
+// 檢查使用者是否具備建立新課程之管理權限 (僅限系統管理員、維運管理者或具備既有教師身分者)
 export async function canUserCreateCourse(env: Env, githubId: string): Promise<boolean> {
-  return !!githubId;
+  if (!githubId) return false;
+  const gid = String(githubId);
+
+  // 1. 系統初始管理員與維運管理者 (不可由一般學生自行觸發或偽造)
+  if (env.INITIAL_ADMIN_GITHUB_ID && String(env.INITIAL_ADMIN_GITHUB_ID) === gid) {
+    return true;
+  }
+  if (env.MINERDOG_GITHUB_ID && String(env.MINERDOG_GITHUB_ID) === gid) {
+    return true;
+  }
+
+  // 2. 既有活躍教師或助教
+  if (env.DB) {
+    const existingTeacher: any = await safeD1First(
+      env.DB.prepare('SELECT id FROM course_memberships WHERE github_id = ? AND role = "teacher" AND status = "active" LIMIT 1').bind(gid)
+    );
+    if (existingTeacher) {
+      return true;
+    }
+
+    // 3. 全新系統初始保護：若資料庫內完全沒有任何課程，允許建立首門課程
+    const courseCount: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM courses'));
+    if (courseCount && Number(courseCount.count) === 0) {
+      return true;
+    }
+  }
+
+  // 學生與未授權使用者嚴格禁止建立課程
+  return false;
 }
 
 // 1. 安全路徑正規化 (Repository-relative path normalization)
@@ -1197,6 +1225,11 @@ export const onRequest = async (context: any) => {
       }
 
       if (request.method === 'POST') {
+        const canCreate = await canUserCreateCourse(env, sessionUser.github_id);
+        if (!canCreate) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Only authorized teachers or administrators can create courses' }), { status: 403, headers });
+        }
+
         const body = await request.json().catch(() => null);
         if (!body || typeof body !== 'object') {
           return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });

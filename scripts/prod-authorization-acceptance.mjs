@@ -432,6 +432,32 @@ async function main() {
       });
     }
 
+    // 2.14 學生嘗試建立新課程遭阻絕 (403 Forbidden)
+    {
+      const res = await api(
+        `/courses`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            course_code: 'HACK201',
+            name: '學生自建課程',
+            semester: '114-1',
+          }),
+        },
+        studentRawToken
+      );
+      recordTest({
+        id: '2.14',
+        role: 'Student (minerdog)',
+        method: 'POST',
+        endpoint: `/courses`,
+        expectedStatus: 403,
+        actualStatus: res.status,
+        summary: res.data?.error || '',
+        pass: res.status === 403 && (res.data?.error || '').includes('teachers or administrators'),
+      });
+    }
+
     // ====================================================
     // 群組 3: 參數竄改防護 (IDOR、Existence Masking 與身分防偽)
     // ====================================================
