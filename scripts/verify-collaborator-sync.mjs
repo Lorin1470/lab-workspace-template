@@ -50,6 +50,29 @@ const testKeypair = crypto.generateKeyPairSync('rsa', {
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
 });
 
+// 輔助：嚴格模擬 SQLite SELECT 欄位投影，絕不無條件回傳完整物件
+function projectFields(row, query) {
+  if (!row) return null;
+  const selectMatch = query.match(/^SELECT\s+([\s\S]+?)\s+FROM/i);
+  if (!selectMatch) return { ...row };
+  const rawFields = selectMatch[1].trim();
+  if (rawFields === '*' || rawFields.includes('.*')) return { ...row };
+
+  const projected = {};
+  const fields = rawFields.split(',').map((f) => f.trim());
+  for (const f of fields) {
+    const aliasMatch = f.match(/(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)(?:\s+AS\s+([a-zA-Z0-9_]+))?$/i);
+    if (aliasMatch) {
+      const origCol = aliasMatch[1];
+      const targetCol = aliasMatch[2] || origCol;
+      if (origCol in row) {
+        projected[targetCol] = row[origCol];
+      }
+    }
+  }
+  return projected;
+}
+
 // Mock D1 資料庫
 class MockCollabD1 {
   constructor() {
@@ -230,26 +253,26 @@ class MockCollabD1 {
 
         first: async () => {
           if (q.includes('FROM user_sessions WHERE session_id = ?')) {
-            return this.sessions.get(binds[0]) || null;
+            return projectFields(this.sessions.get(binds[0]), q);
           }
           if (q.includes('FROM courses WHERE id = ?')) {
-            return this.courses.get(binds[0]) || null;
+            return projectFields(this.courses.get(binds[0]), q);
           }
           if (q.includes('FROM experiments WHERE id = ?')) {
-            return this.experiments.get(binds[0]) || null;
+            return projectFields(this.experiments.get(binds[0]), q);
           }
           if (q.includes('FROM course_memberships WHERE id = ?')) {
             const id = binds[0];
             const courseId = binds[1];
             const m = this.courseMemberships.get(id);
-            if (m && (!courseId || m.course_id === courseId)) return { ...m };
+            if (m && (!courseId || m.course_id === courseId)) return projectFields(m, q);
             return null;
           }
           if (q.includes('FROM experiment_memberships WHERE id = ?')) {
             const id = binds[0];
             const expId = binds[1];
             const m = this.experimentMemberships.get(id);
-            if (m && (!expId || m.experiment_id === expId)) return { ...m };
+            if (m && (!expId || m.experiment_id === expId)) return projectFields(m, q);
             return null;
           }
           if (q.includes('FROM course_memberships WHERE course_id = ? AND github_id = ?')) {
@@ -257,7 +280,7 @@ class MockCollabD1 {
             for (const cm of this.courseMemberships.values()) {
               if (cm.course_id === cid && cm.github_id === String(gid)) {
                 if (q.includes('status = "active"') && cm.status !== 'active') continue;
-                return { ...cm };
+                return projectFields(cm, q);
               }
             }
             return null;
@@ -267,7 +290,7 @@ class MockCollabD1 {
             for (const em of this.experimentMemberships.values()) {
               if (em.experiment_id === eid && em.github_id === String(gid)) {
                 if (q.includes('status = "active"') && em.status !== 'active') continue;
-                return { ...em };
+                return projectFields(em, q);
               }
             }
             return null;
@@ -302,12 +325,16 @@ class MockCollabD1 {
         all: async () => {
           if (q.includes('FROM course_memberships WHERE course_id = ?')) {
             const cid = binds[0];
-            const list = Array.from(this.courseMemberships.values()).filter((m) => m.course_id === cid);
+            const list = Array.from(this.courseMemberships.values())
+              .filter((m) => m.course_id === cid)
+              .map((m) => projectFields(m, q));
             return { results: list };
           }
           if (q.includes('FROM experiment_memberships WHERE experiment_id = ?')) {
             const eid = binds[0];
-            const list = Array.from(this.experimentMemberships.values()).filter((m) => m.experiment_id === eid);
+            const list = Array.from(this.experimentMemberships.values())
+              .filter((m) => m.experiment_id === eid)
+              .map((m) => projectFields(m, q));
             return { results: list };
           }
           return { results: [] };
@@ -943,9 +970,84 @@ async function runTests() {
       mockGitHub.collaborators.has('lorin1470/exp-c2-repo:kevin_chang'),
       '24. Kevin 成功加入 Exp C2 協作者'
     );
+    // 25. 非純數字 github_id 驗證阻絕 (防範誤將 username 填入 ID 欄位)
+    const nonNumericRes1 = await api(`/courses/${courseAId}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ github_id: 'alice_wang', username: 'alice_wang', role: 'student' }),
+    });
     assertTest(
-      !mockGitHub.collaborators.has('lorin1470/exp-c1-repo:kevin_chang'),
-      '24. Kevin 絕無 Exp C1 協作者權限 (Experiment 完全隔離)'
+      nonNumericRes1.status === 400 && String(nonNumericRes1.data.error).includes('numeric string'),
+      '25. Course 新增成員若 github_id 非純數字，遭 400 阻絕並提示'
+    );
+
+    const nonNumericRes2 = await api(`/experiments/${expC1Id}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ github_id: 'bob_huang', username: 'bob_huang', role: 'student' }),
+    });
+    assertTest(
+      nonNumericRes2.status === 400 && String(nonNumericRes2.data.error).includes('numeric string'),
+      '25. Experiment 新增成員若 github_id 非純數字，遭 400 阻絕並提示'
+    );
+
+    // 26. pending 狀態不能在沒有進行同步時永久偽裝成正常進行中：驗證手動重試可成功推進狀態
+    const pendingMemId = 'cm_pending_test';
+    mockD1.courseMemberships.set(pendingMemId, {
+      id: pendingMemId,
+      course_id: courseAId,
+      github_id: '2099',
+      username: 'pending_user',
+      role: 'student',
+      status: 'active',
+      github_permission_status: 'pending',
+      github_permission_error: null,
+      github_synced_at: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    const syncPendingRes = await api(`/courses/${courseAId}/members/${pendingMemId}/sync`, {
+      method: 'POST',
+      headers: adminCookie,
+    });
+    assertTest(
+      syncPendingRes.status === 200 &&
+      syncPendingRes.data.member?.github_permission_status === 'ready' &&
+      mockGitHub.collaborators.has('lorin1470/course-a-repo:pending_user'),
+      '26. pending 狀態可透過重試同步端點正確推進為 ready，不永久偽裝卡住'
+    );
+
+    // 27. Course Mode 新增學生在嚴格 SQL Projection 下確實完成 GitHub 同步 (ready)
+    const addZoe = await api(`/courses/${courseAId}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ github_id: '2025', username: 'zoe_lin', role: 'student' }),
+    });
+    assertTest(
+      addZoe.status === 201 &&
+      addZoe.data.member?.github_permission_status === 'ready' &&
+      mockGitHub.collaborators.has('lorin1470/course-a-repo:zoe_lin'),
+      '27. Course Mode 新增學生在嚴格 SQL Projection 下確實完成 GitHub 同步 (ready)'
+    );
+
+    // 28. Experiment Mode 使用獨立 repository，絕不誤用課程 Repo 或 scoped path
+    const addLeoCourse = await api(`/courses/${courseCId}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ github_id: '2026', username: 'leo_wu', role: 'student' }),
+    });
+    const addLeoExp = await api(`/experiments/${expC1Id}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ github_id: '2026', username: 'leo_wu', role: 'student' }),
+    });
+    assertTest(
+      addLeoExp.status === 201 &&
+      addLeoExp.data.member?.github_permission_status === 'ready' &&
+      mockGitHub.collaborators.has('lorin1470/exp-c1-repo:leo_wu') &&
+      !mockGitHub.collaborators.has('lorin1470/course-c-repo:leo_wu'),
+      '28. Experiment Mode 確實驗收獨立 Repo 且未誤用課程 Repo 或 scoped path'
     );
 
   } finally {

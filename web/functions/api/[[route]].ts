@@ -1201,7 +1201,7 @@ export const onRequest = async (context: any) => {
         return new Response(JSON.stringify({ error: 'Database unavailable' }), { status: 500, headers });
       }
 
-      const course: any = await safeD1First(env.DB.prepare('SELECT id, status FROM courses WHERE id = ?').bind(courseId));
+      const course: any = await safeD1First(env.DB.prepare('SELECT id, status, mode, github_repository FROM courses WHERE id = ?').bind(courseId));
       if (!course) {
         return new Response(JSON.stringify({ error: 'Course not found' }), { status: 404, headers });
       }
@@ -1240,6 +1240,10 @@ export const onRequest = async (context: any) => {
 
         if (!github_id || !username || !role) {
           return new Response(JSON.stringify({ error: 'github_id, username, and role are required' }), { status: 400, headers });
+        }
+
+        if (!/^\d+$/.test(github_id)) {
+          return new Response(JSON.stringify({ error: 'github_id must be a numeric string (e.g. 10001)' }), { status: 400, headers });
         }
 
         if (!['teacher', 'assistant', 'student'].includes(role)) {
@@ -1778,6 +1782,10 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ error: 'github_id and username are required' }), { status: 400, headers });
         }
 
+        if (!/^\d+$/.test(github_id)) {
+          return new Response(JSON.stringify({ error: 'github_id must be a numeric string (e.g. 10001)' }), { status: 400, headers });
+        }
+
         if (!['student', 'assistant'].includes(role)) {
           return new Response(JSON.stringify({ error: 'Invalid role: must be student or assistant' }), { status: 400, headers });
         }
@@ -1920,7 +1928,7 @@ export const onRequest = async (context: any) => {
         await env.DB.prepare(`UPDATE experiment_memberships SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
 
         // Experiment Mode 下協作者權限連動處理
-        const expCourse: any = await safeD1First(env.DB.prepare('SELECT id, mode FROM courses WHERE id = ?').bind(exp.course_id));
+        const expCourse: any = await safeD1First(env.DB.prepare('SELECT id, status, mode, github_repository FROM courses WHERE id = ?').bind(exp.course_id));
         const finalRole = body.role !== undefined ? body.role : targetMem.role;
         const finalStatus = body.status !== undefined ? body.status : targetMem.status;
 

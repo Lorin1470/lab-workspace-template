@@ -206,6 +206,10 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
       setModalError('請輸入 GitHub ID (數值) 與使用者名稱');
       return;
     }
+    if (!/^\d+$/.test(newMemberGithubId.trim())) {
+      setModalError('GitHub ID 必須為不可變純數字識別碼 (例如：10001)，請勿填寫 Username 或英文帳號名稱');
+      return;
+    }
 
     setFormSubmitting(true);
     setModalError(null);
@@ -619,13 +623,25 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
                               <span>✓ 已同步</span>
                             </span>
                           ) : m.github_permission_status === 'pending' ? (
-                            <span
-                              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200"
-                              title="正在向 GitHub 同步協作者權限"
-                            >
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                              <span>同步中</span>
-                            </span>
+                            <div className="inline-flex items-center space-x-1.5">
+                              <span
+                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200"
+                                title="正在向 GitHub 同步協作者權限"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${syncingMemberId === m.id ? 'animate-spin' : ''}`} />
+                                <span>{syncingMemberId === m.id ? '同步處理中' : '待同步 / 同步中'}</span>
+                              </span>
+                              {isCollaborator && (
+                                <button
+                                  onClick={() => handleRetrySync(m)}
+                                  disabled={syncingMemberId === m.id}
+                                  className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50 cursor-pointer"
+                                  title="若同步狀態長時間停滯，點擊手動觸發 GitHub 協作者同步"
+                                >
+                                  {syncingMemberId === m.id ? '同步中...' : '重新同步'}
+                                </button>
+                              )}
+                            </div>
                           ) : m.github_permission_status === 'failed' ? (
                             <div className="inline-flex items-center space-x-1.5">
                               <span

@@ -34,9 +34,22 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const url = endpoint.startsWith('/') ? endpoint : `/api/${endpoint}`;
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
+  const controller = new AbortController();
+  const timeoutMs = 30000;
+  let didTimeout = false;
+  const timeoutId = setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, timeoutMs);
+
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => controller.abort());
+  }
+
   const fetchOptions: RequestInit = {
     ...options,
     credentials: 'include',
+    signal: controller.signal,
   };
 
   if (!isFormData) {
@@ -53,8 +66,19 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   try {
     response = await fetch(url, fetchOptions);
   } catch (err: any) {
+    if (didTimeout) {
+      throw new ApiError(
+        '請求已逾時 (30秒)，伺服器可能仍在背景處理中。請勿重複快速點擊，請重新整理頁面檢查狀態。',
+        408
+      );
+    }
+    if (options.signal?.aborted) {
+      throw new ApiError('請求已被取消。', 0);
+    }
     const msg = err?.message || '網路連線失敗或請求被中斷';
     throw new ApiError(`網路連線異常 (${msg})，請檢查連線或稍後再試。`, 0);
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
