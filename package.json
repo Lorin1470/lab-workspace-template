@@ -21,6 +21,7 @@
     "test:workspace-api": "node scripts/verify-workspace-api.mjs",
     "test:course-mode": "node scripts/verify-course-mode.mjs",
     "test:prod": "node scripts/smoke-test-prod.mjs",
+    "test:prod-auth": "node scripts/prod-authorization-acceptance.mjs",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build"
   },
