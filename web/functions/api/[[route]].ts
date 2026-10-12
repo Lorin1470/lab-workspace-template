@@ -536,38 +536,44 @@ export const onRequest = async (context: any) => {
             (typeof process !== 'undefined' && process.env ? process.env.ACTIVITY_LOG_SECRET : undefined);
           const isBearer = !!(expectedSecret && token && token === expectedSecret);
 
-          if (!isBearer) {
-            const sessionUser = await getSessionUser(request, env);
-            if (!sessionUser) {
-              return new Response(
-                JSON.stringify({ error: 'Repository not found or access denied' }),
-                { status: 404, headers }
-              );
-            }
-
-            if (repo) {
-              const stmt = env.DB.prepare('SELECT id, repository FROM experiments WHERE repository = ?').bind(repo);
-              const expRow: any = await safeD1First(stmt);
-              let courseRow: any = null;
-              if (!expRow || expRow.repository !== repo) {
-                courseRow = await safeD1First(env.DB.prepare('SELECT id, github_repository FROM courses WHERE github_repository = ?').bind(repo));
+          if (courseId) {
+            if (!isBearer) {
+              const sessionUser = await getSessionUser(request, env);
+              if (!sessionUser) {
+                return new Response(
+                  JSON.stringify({ error: 'Course not found or access denied' }),
+                  { status: 404, headers }
+                );
               }
-              const isRegistered = Boolean((expRow && expRow.repository === repo) || (courseRow && courseRow.github_repository === repo));
-              if (isRegistered) {
-                const expParam = url.searchParams.get('exp');
-                const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo, experiment_code: expParam || undefined });
-                if (!perm.allowed) {
-                  return new Response(
-                    JSON.stringify({ error: 'Repository not found or access denied' }),
-                    { status: 404, headers }
-                  );
-                }
-              }
-            } else if (courseId) {
               const isMember = await isCourseMember(env, courseId, sessionUser.github_id);
               if (!isMember) {
                 return new Response(
                   JSON.stringify({ error: 'Course not found or access denied' }),
+                  { status: 404, headers }
+                );
+              }
+            }
+          } else if (repo) {
+            const stmt = env.DB.prepare('SELECT id, repository FROM experiments WHERE repository = ?').bind(repo);
+            const expRow: any = await safeD1First(stmt);
+            let courseRow: any = null;
+            if (!expRow || expRow.repository !== repo) {
+              courseRow = await safeD1First(env.DB.prepare('SELECT id, github_repository FROM courses WHERE github_repository = ?').bind(repo));
+            }
+            const isRegistered = Boolean((expRow && expRow.repository === repo) || (courseRow && courseRow.github_repository === repo));
+            if (isRegistered && !isBearer) {
+              const sessionUser = await getSessionUser(request, env);
+              if (!sessionUser) {
+                return new Response(
+                  JSON.stringify({ error: 'Repository not found or access denied' }),
+                  { status: 404, headers }
+                );
+              }
+              const expParam = url.searchParams.get('exp');
+              const perm = await resolveExperimentPermission(env, sessionUser, { repo_name: repo, experiment_code: expParam || undefined });
+              if (!perm.allowed) {
+                return new Response(
+                  JSON.stringify({ error: 'Repository not found or access denied' }),
                   { status: 404, headers }
                 );
               }
