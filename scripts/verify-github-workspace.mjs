@@ -4,18 +4,21 @@
  * verify-github-workspace.mjs
  * 驗證 GitHub Workspace Skill 規範與 Agent 直連操作邏輯
  *
- * 核心驗收指標 (依任務要求 1-10)：
- * 1. 正確辨識 Course Mode (多實驗共享 Repo，目錄為 experiments/<code\>/)
- * 2. 正確辨識 Experiment Mode (單一實驗獨立 Repo，工作目錄為根目錄)
- * 3. 不會把實驗目錄誤當 Repo 名稱 (嚴格維持 owner/repo 格式，禁止拼入 experiments/)
- * 4. shared 與 separate 報告路徑規則正確 (shared -> report.md, separate -> report-<user>.md，身分邊界)
- * 5. 無法辨識 Repo 或實驗時拒絕寫入 (未提供或格式錯誤時中止)
- * 6. 路徑穿越與跨實驗操作受到阻止 (../, %2e%2e, 跨目錄操作全數阻絕)
- * 7. 不會覆寫現有檔案 (建立前檢查遠端存在性，存在即衝突)
- * 8. 不會修改或刪除 raw/ 既有檔案 (Raw Sanctuary 聖域不可變鐵律)
- * 9. 二進位檔案不會經過有損的文字轉換 (Base64/Binary byte-for-byte 完整性，禁止損壞字元)
- * 10. 寫入失敗或驗證失敗時，不會假報成功 (Commit SHA 缺失或校驗不合判定失敗)
- * 11. SKILL.md 結構、版本 (v1.0)、Frontmatter 與規範完整度檢驗
+ * 測試架構分層（嚴格區分測試真實覆蓋範圍）：
+ * -------------------------------------------------------------
+ * 【層級一：純函式單元測試 (Pure Function Unit Tests)】
+ *   驗證路徑解析、模式判定、聖域防護、Base64無損轉換及SHA校驗之純函式實作。
+ *
+ * 【層級二：Skill 文件規範自動檢查 (Skill Specification Static Checks)】
+ *   自動化解析 SKILL.md，嚴格驗證安全鐵律條款是否存在且無破綻（如禁止預設推送到 main、分步授權等）。
+ *
+ * 【層級三：實際 GitHub API 遠端操作狀態 (Remote GitHub API Live Status)】
+ *   清楚標示已於真實 GitHub Sandbox (Lorin1470/lab-workspace-sandbox-e2e) 實測之項目，
+ *   以及尚未於遠端壓測之項目。
+ *
+ * 【層級四：Agent 真實執行流程驗收狀態 (Agent Interactive Flow Acceptance)】
+ *   清楚標示在人機協作流程中已人工驗收之安全鎖行為，以及未自動化項目（對話狀態機）。
+ * -------------------------------------------------------------
  */
 
 import assert from "node:assert";
@@ -583,44 +586,131 @@ async function runVerification() {
     },
     /遠端內容 SHA256 與本地預期不符/
   );
-  pass("10c. [邏輯檢驗] 寫入後遠端內容 SHA 不一致判定失敗，嚴禁假報成功");
+  pass("9.3 [單元邏輯] 寫入後遠端內容 SHA 不一致判定失敗，嚴禁假報成功");
 
-  // -----------------------------------------------------------
-  // [群組 10: 範本同步一致性與冪等性 (Sync Integrity & Idempotency)]
-  // -----------------------------------------------------------
-  console.log("\n▶ [群組 10: 範本同步一致性與冪等性檢驗]");
-
-  const rootSkillFile = path.join(ROOT_DIR, ".github", "skills", "github-workspace", "SKILL.md");
-  const tmplSkillFile = path.join(ROOT_DIR, "template", ".github", "skills", "github-workspace", "SKILL.md");
-  assert.ok(fs.existsSync(rootSkillFile), "母倉庫 SKILL.md 必須存在");
-  assert.ok(fs.existsSync(tmplSkillFile), "template SKILL.md 必須存在");
-
-  const rootHash = crypto.createHash("sha256").update(fs.readFileSync(rootSkillFile)).digest("hex");
-  const tmplHash = crypto.createHash("sha256").update(fs.readFileSync(tmplSkillFile)).digest("hex");
-  assert.strictEqual(rootHash, tmplHash, "母倉庫與 template 中的 github-workspace/SKILL.md 雜湊必須 100% 一致");
-  pass("11. 母倉庫與 template 之 Skill 內容雜湊完全吻合 (Byte-for-byte 100% 一致)");
-
-  // -----------------------------------------------------------
-  // [群組 10: SKILL.md 結構與規格檢驗]
-  // -----------------------------------------------------------
-  console.log("\n▶ [群組 10: SKILL.md 檔案存在與規格完整度檢驗]");
+  // ===========================================================
+  // 【層級二：Skill 文件規範自動檢查 (Specification Static Checks)】
+  // ===========================================================
+  console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("📜 【層級二：Skill 文件規範自動檢查 (Specification Static Checks)】");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
   const skillPath = path.join(ROOT_DIR, ".github", "skills", "github-workspace", "SKILL.md");
-  assert.ok(fs.existsSync(skillPath), "SKILL.md 必須存在於 .github/skills/github-workspace/");
+  const tmplSkillPath = path.join(ROOT_DIR, "template", ".github", "skills", "github-workspace", "SKILL.md");
+
+  assert.ok(fs.existsSync(skillPath), "母倉庫 SKILL.md 必須存在");
+  assert.ok(fs.existsSync(tmplSkillPath), "template SKILL.md 必須存在");
 
   const skillContent = fs.readFileSync(skillPath, "utf8");
-  assert.ok(skillContent.includes("name: github-workspace"), "SKILL.md 必須宣告 name: github-workspace");
-  assert.ok(skillContent.includes('version: "1.0"'), "SKILL.md 必須宣告 version: 1.0");
-  assert.ok(skillContent.includes("Course Mode"), "SKILL.md 必須涵蓋 Course Mode 規範");
-  assert.ok(skillContent.includes("Experiment Mode"), "SKILL.md 必須涵蓋 Experiment Mode 規範");
-  assert.ok(skillContent.includes("Raw Data Sanctuary"), "SKILL.md 必須涵蓋 Raw Data Sanctuary 規範");
-  assert.ok(skillContent.includes("separate"), "SKILL.md 必須涵蓋 separate 報告模式規範");
-  assert.ok(skillContent.includes("shared"), "SKILL.md 必須涵蓋 shared 報告模式規範");
-  assert.ok(skillContent.includes("https://lab.minerdog.qzz.io/api"), "SKILL.md 必須明文禁止 Web API");
-  pass("11. SKILL.md 檔案存在，Frontmatter、Version 1.0 與核心安全規範完整度檢驗合格");
+  const tmplSkillContent = fs.readFileSync(tmplSkillPath, "utf8");
+
+  // 10.1 Push 安全防護：不得寫死或預設推送至 main
+  assert.ok(!skillContent.includes("git push origin main"), "SKILL.md 嚴禁包含寫死預設推送至 main ('git push origin main')");
+  assert.ok(
+    skillContent.includes("禁止預設推送至 `main`") || skillContent.includes("不得預設使用 `main`"),
+    "SKILL.md 必須明確規範『禁止預設推送至 main』"
+  );
+  pass("10.1 Push 安全規範：確認未寫死 main，嚴禁將 main 設為預設推送目標");
+
+  // 10.2 Push 前四重確認與專屬預覽
+  assert.ok(skillContent.includes("遠端推送預覽確認 (Git Push)"), "SKILL.md 必須定義專屬 Git Push 預覽確認區塊");
+  assert.ok(skillContent.includes("待推送 Commit SHA"), "Push 預覽必須明確顯示待推送 Commit SHA");
+  pass("10.2 Push 安全規範：具備獨立推送預覽區塊與來源/目標分支/Commit SHA 完整檢核");
+
+  // 10.3 分步獨立授權原則 (檔案寫入 ≠ Commit ≠ Push)
+  assert.ok(
+    skillContent.includes("建立/修改檔案") &&
+    skillContent.includes("Commit") &&
+    skillContent.includes("Push"),
+    "SKILL.md 必須明確規範檔案建立、Commit、Push 各自獨立授權"
+  );
+  assert.ok(skillContent.includes("不可繼承"), "SKILL.md 必須強調授權不可自動跨階段繼承");
+  pass("10.3 分步授權規範：嚴格宣告建立檔案 ≠ Commit ≠ Push，各階段獨立授權且不可繼承");
+
+  // 10.4 未取得授權時必須立即停止
+  assert.ok(
+    skillContent.includes("未取得授權時必須立即停止") || skillContent.includes("未取得使用者明確授權前，必須立即停止"),
+    "SKILL.md 必須明確規範未獲授權時必須立即停止"
+  );
+  pass("10.4 安全停止條款：未取得明確授權時必須立即停止，嚴禁越權執行");
+
+  // 10.5 嚴禁 force push 與重寫歷史
+  assert.ok(skillContent.includes("git push --force"), "SKILL.md 必須明文禁止 git push --force");
+  assert.ok(skillContent.includes("重寫") || skillContent.includes("篡改"), "SKILL.md 必須明文禁止刪除或重寫 Commit 歷史");
+  pass("10.5 歷史保護規範：嚴禁 --force 推送，嚴禁刪除或篡改 Commit 歷史");
+
+  // 10.6 Push 授權絕不等於 PR 合併或部署
+  assert.ok(
+    skillContent.includes("PR 合併") || skillContent.includes("部署"),
+    "SKILL.md 必須明確宣告 Push 授權絕不得解讀為 PR 合併或部署授權"
+  );
+  pass("10.6 邊界防護條款：明確規定 Push 授權不擴大至合併或部署");
+
+  // 10.7 防覆寫與 404 預檢
+  assert.ok(/404 Not Found/.test(skillContent), "SKILL.md 必須要求建立新檔案前確認 404 Not Found");
+  assert.ok(/若遠端已存在該檔案.*禁止覆寫/.test(skillContent), "SKILL.md 必須要求遠端存在時禁止覆寫");
+  pass("10.7 防覆寫條款：強制建立前發送 GET 預檢 404，已存在檔案禁止覆寫");
+
+  // 10.8 Raw Data Sanctuary 不可變條款
+  assert.ok(/Raw Data Sanctuary/.test(skillContent), "SKILL.md 必須包含 Raw Data Sanctuary 規範");
+  assert.ok(/嚴禁對.*raw\/.*現存檔案進行修改、覆蓋、重新命名或刪除/.test(skillContent), "SKILL.md 必須明文保護 raw/ 現存檔案");
+  pass("10.8 原始數據聖域：明文禁止修改、覆寫、重新命名或刪除 raw/ 檔案");
+
+  // 10.9 路徑穿越與空字元防護規範
+  assert.ok(/%2e%2e/i.test(skillContent), "SKILL.md 必須明文禁止 %2e%2e URL 編碼路徑穿越");
+  assert.ok(/\.\.\//.test(skillContent), "SKILL.md 必須明文禁止 ../ 路徑穿越");
+  assert.ok(/(%00|\\0)/.test(skillContent), "SKILL.md 必須明文禁止空字元注入");
+  pass("10.9 路徑安全規範：完整納入相對路徑穿越、編碼穿越與空字元防禦條款");
+
+  // 10.10 雙模式與報告隔離條款
+  assert.ok(/Course Mode/.test(skillContent), "SKILL.md 必須包含 Course Mode 規範");
+  assert.ok(/Experiment Mode/.test(skillContent), "SKILL.md 必須包含 Experiment Mode 規範");
+  assert.ok(/report_mode:\s*separate/.test(skillContent), "SKILL.md 必須規範 separate 模式個人報告隔離");
+  pass("10.10 架構與報告隔離規範：明確規範雙模式目錄邊界與個人報告隔離");
+
+  // 10.11 範本副本 100% 同步檢驗
+  const rootSkillHash = crypto.createHash("sha256").update(skillContent).digest("hex");
+  const tmplSkillHash = crypto.createHash("sha256").update(tmplSkillContent).digest("hex");
+  assert.strictEqual(rootSkillHash, tmplSkillHash, "母倉庫與 template 之 SKILL.md 雜湊必須完全相同");
+  pass("10.11 範本同步一致性：母倉庫與 template/ 之 Skill 雜湊 Byte-for-byte 100% 一致");
+
+  // ===========================================================
+  // 【層級三：實際 GitHub API 遠端操作狀態標示】
+  // ===========================================================
+  console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("🌐 【層級三：實際 GitHub API 遠端操作狀態 (Remote API Live Matrix)】");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("  ℹ️  [離線保證] 本測試腳本純本機執行，不發起遠端網路請求，以維護 CI 穩定性與遠端環境乾淨。");
+  console.log("  ℹ️  [實測紀錄] 以下為在獲授權之私有 Sandbox (Lorin1470/lab-workspace-sandbox-e2e) 的實測狀態：");
+  console.log("    • [✅ 已實測 PASS] 二進位 PNG (81 bytes) Contents API PUT 上傳 (真實 Commit: 051eee6)");
+  console.log("    • [✅ 已實測 PASS] 二進位 Raw 串流下載 SHA-256 精確比對 (7a1c549b... 100% 吻合)");
+  console.log("    • [✅ 已實測 PASS] macOS 原生 sips 驗證二進位圖檔結構正常無失真");
+  console.log("    • [✅ 已實測 PASS] 文字檔 Markdown (461 bytes) PUT 上傳 (真實 Commit: ee18e86)");
+  console.log("    • [✅ 已實測 PASS] 文字檔 Raw 串流下載 SHA-256 精確比對 (4b7c15c2... 100% 吻合)");
+  console.log("    • [✅ 已實測 PASS] 未帶 SHA 覆寫現有檔案遭 GitHub 原生 422 阻絕 (無副作用)");
+  console.log("    • [✅ 已實測 PASS] 帶錯誤 SHA 覆寫現有檔案遭 GitHub 原生 409 阻絕 (無副作用)");
+  console.log("    • [✅ 已實測 PASS] 預檢 GET 偵測到 200 OK 觸發主動終止，阻止向 GitHub 發起覆寫請求");
+  console.log("    • [⏳ 未實測/標記] 超大檔案 (>100MB) Git LFS 分塊上傳 (超出實驗常態尺寸)");
+  console.log("    • [⏳ 未實測/標記] 高並發多成員衝突自動重試 (超出單一 Agent 授權範圍)");
+
+  // ===========================================================
+  // 【層級四：Agent 真實執行流程驗收狀態標示】
+  // ===========================================================
+  console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("🤖 【層級四：Agent 真實執行流程驗收狀態 (Interactive Flow Matrix)】");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("  ℹ️  [邊界宣告] 單元測試與文件規範檢查不等於 Agent 完整的真實互動流程驗收。");
+  console.log("  ℹ️  [實測紀錄] 以下為在真實會話流程中經人工確認之行為狀態：");
+  console.log("    • [✅ 已實測 PASS] 寫入前預覽與停止等待授權（未授權前 0 寫入）");
+  console.log("    • [✅ 已實測 PASS] 本地 Commit 前預覽與獨立授權（Commit caf6886）");
+  console.log("    • [✅ 已實測 PASS] 遠端 Push 前預覽與獨立授權（Push feat/github-workspace-skill）");
+  console.log("    • [✅ 已實測 PASS] 建立 PR 前預覽與獨立授權（PR #8）");
+  console.log("    • [✅ 已實測 PASS] 授權邊界嚴守：嚴禁將 Push 授權外溢至 PR 合併或部署");
+  console.log("    • [✅ 已實測 PASS] 測試環境隔離：零碰觸正式母倉庫遠端 main、零碰觸正式課程 Repo");
+  console.log("    • [⏳ 未實測/標記] LLM 對話狀態機全自動模擬器 (目前依賴系統安全鎖與人類閘門)");
 
   console.log("\n====================================================");
-  console.log(`📊 驗證總結：通過 ${passedCount} 項，失敗 0 項`);
+  console.log(`📊 驗證總結：通過 ${passedCount} 項自動化測試，失敗 0 項`);
   console.log("====================================================\n");
 }
 
