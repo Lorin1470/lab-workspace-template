@@ -17,7 +17,7 @@ import assert from 'node:assert';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
-import { onRequest } from '../web/functions/api/[[route]].ts';
+import { onRequest, canUserCreateCourse } from '../web/functions/api/[[route]].ts';
 
 const TEST_PORT = 9001;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}/api`;
@@ -573,9 +573,9 @@ async function run() {
     let expMemberId = '';
 
     // ----------------------------------------------------
-    // 群組 1: 課程工作區自主建立 (所有認證使用者皆可建立)
+    // 群組 1: 課程建立鑑權與空資料庫防護 (移除非管理者自動授權)
     // ----------------------------------------------------
-    console.log('▶ [群組 1: 課程工作區自主建立 (所有認證使用者皆可建立)]');
+    console.log('▶ [群組 1: 課程建立鑑權與空資料庫防護 (移除非管理者自動授權)]');
     {
       // 1.1 未登入訪客建立課程遭拒絕 (401)
       const resNoAuth = await fetch(`${BASE_URL}/courses`, {
@@ -586,7 +586,30 @@ async function run() {
       assert.strictEqual(resNoAuth.status, 401);
       pass('未登入訪客建立課程遭拒絕 (401 Unauthorized)');
 
-      // 1.2 任何認證使用者皆可建立首門課程 (EE201)
+      // 1.2 空資料庫情境下，一般學生嘗試建立首門課程遭阻絕 (403 Forbidden)
+      assert.strictEqual(mockD1.courses.size, 0, '前置條件：資料庫課程數必須為 0');
+      const resStudentEmptyDb = await fetch(`${BASE_URL}/courses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.studentA },
+        body: JSON.stringify({ course_code: 'HACK101', name: '學生自建首門課', semester: '114-1' }),
+      });
+      assert.strictEqual(resStudentEmptyDb.status, 403);
+      assert.strictEqual(mockD1.courses.size, 0, '空資料庫遭拒絕後不得新增課程');
+      assert.strictEqual(mockD1.courseMemberships.size, 0, '空資料庫遭拒絕後不得新增成員');
+      pass('空資料庫下一般學生嘗試建立課程遭阻絕 (403 Forbidden，零課程/成員殘留)');
+
+      // 1.3 空資料庫情境下，助教嘗試建立首門課程遭阻絕 (403 Forbidden)
+      const resAssistantEmptyDb = await fetch(`${BASE_URL}/courses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.assistant },
+        body: JSON.stringify({ course_code: 'TA101', name: '助教自建首門課', semester: '114-1' }),
+      });
+      assert.strictEqual(resAssistantEmptyDb.status, 403);
+      assert.strictEqual(mockD1.courses.size, 0, '空資料庫遭拒絕後不得新增課程');
+      assert.strictEqual(mockD1.courseMemberships.size, 0, '空資料庫遭拒絕後不得新增成員');
+      pass('空資料庫下助教嘗試建立首門課程遭阻絕 (403 Forbidden，零課程/成員殘留)');
+
+      // 1.4 空資料庫情境下，指定系統管理員 (INITIAL_ADMIN_GITHUB_ID) 成功建立首門課程 (201 Created)
       const resBootstrap = await fetch(`${BASE_URL}/courses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: COOKIES.bootstrapAdmin },
@@ -598,9 +621,9 @@ async function run() {
       assert.strictEqual(data.course.course_code, 'EE201');
       assert.strictEqual(data.course.status, 'active');
       createdCourseId = data.course.id;
-      pass('認證使用者成功建立課程工作區 (201)');
+      pass('指定系統管理員成功建立首門課程工作區 (201)');
 
-      // 1.3 一般學生／未獲授權使用者嘗試建立課程遭拒絕 (403 Forbidden)
+      // 1.5 系統已有課程時，一般學生嘗試建立課程遭拒絕 (403 Forbidden)
       const prevCourseCount = mockD1.courses.size;
       const prevMemberCount = mockD1.courseMemberships.size;
       const tempUserCookie = createSession({ github_id: '99998', username: 'temp_user' });
@@ -613,6 +636,98 @@ async function run() {
       assert.strictEqual(mockD1.courses.size, prevCourseCount, '資料庫不得新增課程');
       assert.strictEqual(mockD1.courseMemberships.size, prevMemberCount, '資料庫不得新增成員');
       pass('一般學生／未獲授權使用者建立課程遭伺服器端拒絕 (403 Forbidden，零資料殘留)');
+
+      // 1.6 系統已有課程時，未具備教師身分之助教嘗試建立新課程遭拒絕 (403 Forbidden)
+      const resAssistantExistDb = await fetch(`${BASE_URL}/courses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.assistant },
+        body: JSON.stringify({ course_code: 'TA201', name: '助教自建課程', semester: '114-1' }),
+      });
+      assert.strictEqual(resAssistantExistDb.status, 403);
+      assert.strictEqual(mockD1.courses.size, prevCourseCount, '資料庫不得新增課程');
+      pass('未具教師身分之助教嘗試建立新課程遭伺服器端拒絕 (403 Forbidden)');
+    }
+
+    // ----------------------------------------------------
+    // 群組 1B: canUserCreateCourse 權限矩陣與資料庫容錯測試 (Fail-Closed)
+    // ----------------------------------------------------
+    console.log('\n▶ [群組 1B: canUserCreateCourse 權限矩陣與容錯回歸測試]');
+    {
+      const baseEnv = {
+        DB: mockD1,
+        INITIAL_ADMIN_GITHUB_ID: BOOTSTRAP_ADMIN_ID,
+        MINERDOG_GITHUB_ID: 'minerdog_ops_admin',
+      };
+
+      // 1B.1 空 ID / 訪客 -> false
+      assert.strictEqual(await canUserCreateCourse(baseEnv, ''), false);
+      assert.strictEqual(await canUserCreateCourse(baseEnv, null), false);
+      pass('canUserCreateCourse: 空 ID 或無效輸入回傳 false');
+
+      // 1B.2 指定系統管理員 -> true
+      assert.strictEqual(await canUserCreateCourse(baseEnv, BOOTSTRAP_ADMIN_ID), true);
+      pass('canUserCreateCourse: INITIAL_ADMIN_GITHUB_ID 驗證通過');
+
+      // 1B.3 維運管理者 -> true
+      assert.strictEqual(await canUserCreateCourse(baseEnv, 'minerdog_ops_admin'), true);
+      pass('canUserCreateCourse: MINERDOG_GITHUB_ID 驗證通過');
+
+      // 1B.4 一般學生 -> false
+      assert.strictEqual(await canUserCreateCourse(baseEnv, '3001'), false);
+      pass('canUserCreateCourse: 一般學生回傳 false');
+
+      // 1B.5 助教 (無 teacher 角色) -> false
+      assert.strictEqual(await canUserCreateCourse(baseEnv, '2001'), false);
+      pass('canUserCreateCourse: 助教 (無 teacher 角色) 回傳 false');
+
+      // 1B.6 活躍教師 (role = teacher, status = active) -> true
+      mockD1.prepare('INSERT INTO course_memberships VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(
+        'cm_test_t', 'c_test_env', '4001', 'teacher_bob', 'teacher', 'active', new Date().toISOString(), new Date().toISOString()
+      ).run();
+      assert.strictEqual(await canUserCreateCourse(baseEnv, '4001'), true);
+      pass('canUserCreateCourse: 具備 active teacher 角色回傳 true');
+
+      // 1B.7 停用教師 (role = teacher, status = inactive) -> false
+      mockD1.prepare('INSERT INTO course_memberships VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(
+        'cm_test_t_inact', 'c_test_env', '4002', 'teacher_charlie', 'teacher', 'inactive', new Date().toISOString(), new Date().toISOString()
+      ).run();
+      assert.strictEqual(await canUserCreateCourse(baseEnv, '4002'), false);
+      pass('canUserCreateCourse: 停用教師 (status = inactive) 回傳 false');
+
+      // 1B.8 空資料庫情境 (模擬無課程無成員) -> 一般學生與助教皆 false
+      const emptyMockD1 = new MockManagementD1();
+      const emptyEnv = { DB: emptyMockD1, INITIAL_ADMIN_GITHUB_ID: '99999' };
+      assert.strictEqual(await canUserCreateCourse(emptyEnv, 'student_alone'), false);
+      assert.strictEqual(await canUserCreateCourse(emptyEnv, 'assistant_alone'), false);
+      assert.strictEqual(await canUserCreateCourse(emptyEnv, '99999'), true);
+      pass('canUserCreateCourse: 空資料庫環境下一般使用者回傳 false，僅 INITIAL_ADMIN 通過');
+
+      // 1B.9 資料庫查詢拋出例外 (SQL Error / DB down) -> 嚴格 Fail-Closed (回傳 false)
+      const errorDb = {
+        prepare: () => ({
+          bind: () => ({
+            first: async () => { throw new Error('D1 Internal Connection Error'); },
+            all: async () => { throw new Error('D1 Internal Connection Error'); },
+          }),
+        }),
+      };
+      const errorEnv = { DB: errorDb };
+      assert.strictEqual(await canUserCreateCourse(errorEnv, 'student_err'), false);
+      assert.strictEqual(await canUserCreateCourse(errorEnv, 'teacher_err'), false);
+      pass('canUserCreateCourse: 資料庫查詢拋出例外時安全阻絕 (Fail-Closed 回傳 false)');
+
+      // 1B.10 資料庫回傳異常空物件或無效格式 -> 嚴格 Fail-Closed (回傳 false)
+      const abnormalDb = {
+        prepare: () => ({
+          bind: () => ({
+            first: async () => ({}), // 沒有 id
+            all: async () => ({ results: [{}] }),
+          }),
+        }),
+      };
+      const abnormalEnv = { DB: abnormalDb };
+      assert.strictEqual(await canUserCreateCourse(abnormalEnv, 'teacher_abnormal'), false);
+      pass('canUserCreateCourse: 資料庫回傳異常格式 (無有效 id) 時回傳 false');
     }
 
     // ----------------------------------------------------

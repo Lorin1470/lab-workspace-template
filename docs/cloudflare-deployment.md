@@ -27,15 +27,25 @@ npx wrangler d1 execute experiment-workspace-db --file=web/schema.sql
 
 ---
 
-## 三、設定 GitHub 認證環境變數 (Secrets)
+## 三、設定 GitHub 認證與管理員環境變數 (Secrets)
 
-為確保安全性，GitHub 密鑰嚴禁寫死在前端。請於 Cloudflare Pages 設定 Secret：
+為確保安全性，GitHub 密鑰與管理員身分嚴禁寫死在前端。請於 Cloudflare Pages 設定 Secret：
 
 ```bash
-# 在 Cloudflare Pages 專案中配置後端密鑰
+# 1. 配置 GitHub OAuth 密鑰
 npx wrangler pages secret put GITHUB_CLIENT_ID
 npx wrangler pages secret put GITHUB_CLIENT_SECRET
+
+# 2. 配置初始系統管理員與維運管理者 GitHub ID (例如數值 ID 106532605 或 GitHub username)
+npx wrangler pages secret put INITIAL_ADMIN_GITHUB_ID
+npx wrangler pages secret put MINERDOG_GITHUB_ID
 ```
+
+### 全新環境初始化安全說明
+- **移除非管理者自動授權**：為維護學生專用模式的安全邊界，即使在資料庫課程數為 0 的全新環境中，一般學生與未獲授權使用者呼叫 `POST /api/courses` 依然會收到 `403 Forbidden`，資料庫亦不會產生任何課程或成員紀錄。
+- **全新環境安全初始化途徑**：
+  1. **途徑一（管理員 Web 登入）**：由 `INITIAL_ADMIN_GITHUB_ID` 或 `MINERDOG_GITHUB_ID` 指定之管理員以 GitHub 帳號登入系統，呼叫 `POST /api/courses` 建立第一門課程；該管理員將自動登記為教師。
+  2. **途徑二（D1 SQL 預先植入）**：維運人員於佈署時，透過 `npx wrangler d1 execute <db-name> --command="..."` 預先寫入第一筆課程與指定教師之 `course_memberships`。
 
 ---
 

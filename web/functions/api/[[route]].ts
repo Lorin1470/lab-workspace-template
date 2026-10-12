@@ -173,23 +173,17 @@ export async function canUserCreateCourse(env: Env, githubId: string): Promise<b
     return true;
   }
 
-  // 2. 既有活躍教師或助教
+  // 2. 既有活躍教師
   if (env.DB) {
     const existingTeacher: any = await safeD1First(
       env.DB.prepare('SELECT id FROM course_memberships WHERE github_id = ? AND role = "teacher" AND status = "active" LIMIT 1').bind(gid)
     );
-    if (existingTeacher) {
-      return true;
-    }
-
-    // 3. 全新系統初始保護：若資料庫內完全沒有任何課程，允許建立首門課程
-    const courseCount: any = await safeD1First(env.DB.prepare('SELECT COUNT(*) as count FROM courses'));
-    if (courseCount && Number(courseCount.count) === 0) {
+    if (existingTeacher && existingTeacher.id) {
       return true;
     }
   }
 
-  // 學生與未授權使用者嚴格禁止建立課程
+  // 學生、助教與未獲授權使用者嚴格禁止建立課程 (空資料庫禁止自動授權，初始化必須由指定管理者執行)
   return false;
 }
 
