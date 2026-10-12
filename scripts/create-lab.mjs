@@ -218,7 +218,8 @@ async function main() {
     console.log('  processed/');
     console.log('  analysis/');
     console.log('  report/');
-    console.log('  .github/skills/experiment-report/SKILL.md\n');
+    console.log('  .github/skills/experiment-report/SKILL.md');
+    console.log('  .github/skills/github-workspace/SKILL.md\n');
     console.log('Template Version:');
     console.log('  1.0\n');
     console.log(`詳細設定:`);
@@ -309,6 +310,7 @@ async function main() {
     console.log('  + .github/skills/experiment-report/SKILL.md');
     console.log('  + .github/skills/experiment-report/references/git-commit-guide.md');
     console.log('  + .github/skills/experiment-report/references/report-template.md');
+    console.log('  + .github/skills/github-workspace/SKILL.md');
     console.log('  + .gitignore');
     console.log('\n預計 Commit Message：');
     console.log(`  "${initialCommitMsg}"`);
