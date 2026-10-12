@@ -1602,7 +1602,9 @@ async function runFrontendIntegrationTests() {
     assert.strictEqual(defaultTab, 'files');
     const customWorkspaceTab = resolveInitialExperimentTab('files');
     assert.strictEqual(customWorkspaceTab, 'files');
-    pass('6. 「開啟實驗工作區」導覽目標正確對應至 Workspace Tab (files) 而非 activity');
+    const legacyUploadTab = resolveInitialExperimentTab('upload');
+    assert.strictEqual(legacyUploadTab, 'files');
+    pass('6. 「開啟實驗工作區」導覽目標正確對應至 Workspace Tab (files) 而非 activity，且舊 upload 標籤平順收斂至 files');
 
     // 10.7 Course Mode 不顯示獨立 repository provisioning warning (覆蓋條件 7)
     const shouldShowInCourseMode = shouldShowStandaloneProvisioningWarning('course', 'example-org/shared-physics-course', 'pending');
@@ -1611,7 +1613,7 @@ async function runFrontendIntegrationTests() {
     assert.strictEqual(shouldShowInExpMode, true);
     pass('7. Course Mode 成功抑制獨立 Repository 建立警告 (Pending Provisioning)');
 
-    // 10.8 Course Mode UI 不顯示 experiments/<code>/ implementation path (覆蓋條件 8)
+    // 10.8 Course Mode UI 不顯示 experiments/<code>/ implementation path 與 移除舊上傳分頁 (覆蓋條件 8)
     const webComponentsDir = path.resolve('web/src/components');
     const componentFiles = ['CourseDetail.tsx', 'CourseList.tsx', 'ExperimentDetail.tsx', 'Navbar.tsx', 'WorkspaceManager.tsx'];
     for (const compFile of componentFiles) {
@@ -1621,7 +1623,10 @@ async function runFrontendIntegrationTests() {
       assert(!content.includes('路徑：experiments/'), `${compFile} 不應外洩「路徑：experiments/」標籤`);
       assert(!content.includes('experiments/<code\\>/ 目錄隔離'), `${compFile} 不應外洩 experiments/<code\\>/ 目錄隔離技術字樣`);
     }
-    pass('8. 前端核心元件靜態審查通過，絕無向一般使用者視覺區域外洩 experiments/<code>/ 實作路徑');
+    const expDetailSrc = fs.readFileSync(path.join(webComponentsDir, 'ExperimentDetail.tsx'), 'utf8');
+    assert(!expDetailSrc.includes('📤 上傳資料'), 'ExperimentDetail 不應再包含獨立的「📤 上傳資料」重複分頁');
+    assert(!expDetailSrc.includes("id: 'upload'"), 'ExperimentDetail 分頁列表中不應再有 upload tab');
+    pass('8. 前端核心元件靜態審查通過，絕無向一般使用者視覺區域外洩 experiments/<code>/ 實作路徑，且舊「上傳資料」分頁已徹底移除');
 
     // 10.9 getReportRelativePath 路徑解析決策驗證
     assert.strictEqual(getReportRelativePath('shared', '20001'), 'report/report.md');

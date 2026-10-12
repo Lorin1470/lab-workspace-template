@@ -28,7 +28,10 @@ export function resolveNavbarRepository(
  */
 export function resolveInitialExperimentTab(
   requestedTab?: 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download'
-): 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download' {
+): 'activity' | 'members' | 'report' | 'files' | 'download' {
+  if (requestedTab === 'upload') {
+    return 'files';
+  }
   return requestedTab || 'files';
 }
 

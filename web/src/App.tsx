@@ -18,7 +18,7 @@ export const App: React.FC = () => {
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedExperiment, setSelectedExperiment] = useState<Experiment | null>(null);
   const [experimentInitialTab, setExperimentInitialTab] = useState<
-    'activity' | 'members' | 'report' | 'files' | 'upload' | 'download'
+    'activity' | 'members' | 'report' | 'files' | 'download'
   >('files');
 
   // 全域通知 Toast
@@ -107,7 +107,7 @@ export const App: React.FC = () => {
   // 導覽至實驗詳情
   const handleSelectExperiment = async (
     exp: Experiment,
-    initialTab?: 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download'
+    initialTab?: 'activity' | 'members' | 'report' | 'files' | 'download'
   ) => {
     try {
       const data = await api.experiments.get(exp.id);

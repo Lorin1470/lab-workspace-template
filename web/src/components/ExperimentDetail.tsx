@@ -21,7 +21,6 @@ import {
   Activity,
   FileText,
   FolderTree,
-  Upload,
   Download,
   UserPlus,
   RefreshCw,
@@ -50,7 +49,7 @@ interface ExperimentDetailProps {
   onSuccess: (msg: string) => void;
 }
 
-type TabType = 'activity' | 'members' | 'report' | 'files' | 'upload' | 'download';
+type TabType = 'activity' | 'members' | 'report' | 'files' | 'download';
 
 const expStatusMap: Record<ExperimentStatus, { label: string; badgeClass: string; icon: string }> = {
   not_started: {
@@ -94,7 +93,9 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
 }) => {
   const isCourseMode = course?.mode === 'course';
   const resolvedRepo = isCourseMode ? (course?.github_repository || '') : (experiment.repository || '');
-  const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'files');
+  const [activeTab, setActiveTab] = useState<TabType>(
+    (initialTab as any) === 'upload' ? 'files' : (initialTab || 'files')
+  );
   const [members, setMembers] = useState<ExperimentMembership[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -104,7 +105,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   // 同步外部傳入的 initialTab 或當切換至其他實驗時更新
   useEffect(() => {
     if (initialTab) {
-      setActiveTab(initialTab);
+      setActiveTab((initialTab as any) === 'upload' ? 'files' : initialTab);
     }
   }, [experiment.id, initialTab]);
 
@@ -816,7 +817,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             { id: 'members', label: `👥 實驗成員 (${members.length})`, icon: Users },
             { id: 'report', label: '📄 實驗報告', icon: FileText },
             { id: 'files', label: '📁 工作區 (Workspace)', icon: FolderTree },
-            { id: 'upload', label: '📤 上傳資料', icon: Upload },
             { id: 'download', label: '📥 打包下載', icon: Download },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -1309,32 +1309,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
           />
         )}
 
-        {/* 5. 上傳資料 (整合至工作區) */}
-        {activeTab === 'upload' && (
-          <div className="space-y-6">
-            <div className="bg-blue-50 border border-blue-200 p-6 rounded-xl flex items-start space-x-4 shadow-xs">
-              <FolderTree className="w-8 h-8 text-blue-600 shrink-0 mt-1" />
-              <div className="space-y-2">
-                <h4 className="font-bold text-slate-900 text-base">工作區資料上傳已全面整合</h4>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  實驗量測數據與實驗照片上傳功能已與 GitHub Workspace 深度整合。您可以在「📁 工作區」中即時瀏覽真實目錄、上傳原始數據至 <code>raw/</code>（受唯讀保護，不可覆寫或竄改）、上傳實驗照片至 <code>photos/</code>（上限 5MB），並即時取得真實 GitHub Git Commit SHA 與活動紀錄更新。
-                </p>
-                <div className="pt-2">
-                  <button
-                    onClick={() => setActiveTab('files')}
-                    className="inline-flex items-center space-x-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors cursor-pointer shadow-xs"
-                  >
-                    <FolderTree className="w-4 h-4" />
-                    <span>前往「📁 工作區」操作</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-
-        {/* 6. 打包下載 */}
+        {/* 5. 打包下載 */}
         {activeTab === 'download' && (
           <div className="space-y-4">
             <p className="text-sm text-slate-500">
