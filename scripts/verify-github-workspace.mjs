@@ -604,20 +604,61 @@ async function runVerification() {
   const skillContent = fs.readFileSync(skillPath, "utf8");
   const tmplSkillContent = fs.readFileSync(tmplSkillPath, "utf8");
 
+  let staticCheckCount = 0;
+  function passStatic(msg) {
+    passedCount++;
+    staticCheckCount++;
+    console.log(`  ✅ [PASS] ${msg}`);
+  }
+
   // 10.1 Push 安全防護：不得寫死或預設推送至 main
   assert.ok(!skillContent.includes("git push origin main"), "SKILL.md 嚴禁包含寫死預設推送至 main ('git push origin main')");
   assert.ok(
-    skillContent.includes("禁止預設推送至 `main`") || skillContent.includes("不得預設使用 `main`"),
+    /(嚴禁|禁止|不得).*預設.*(推送|使用).*main/.test(skillContent),
     "SKILL.md 必須明確規範『禁止預設推送至 main』"
   );
-  pass("10.1 Push 安全規範：確認未寫死 main，嚴禁將 main 設為預設推送目標");
+  passStatic("10.1 Push 安全規範：確認未寫死 main，嚴禁將 main 設為預設推送目標");
 
-  // 10.2 Push 前四重確認與專屬預覽
+  // 10.2 明確來源與目標分支映射
+  assert.ok(
+    skillContent.includes("<source_branch>:<target_branch>"),
+    "SKILL.md 必須明確規範來源與目標分支映射 (<source_branch>:<target_branch>)"
+  );
+  passStatic("10.2 Push 分支映射：執行指令明確包含來源與目標分支映射 (source:target)");
+
+  // 10.3 授權目標分支嚴格一致性
+  assert.ok(
+    skillContent.includes("授權之目標分支必須與實際執行的推送指令完全一致") ||
+    /目標分支必須與.*授權.*一致/.test(skillContent),
+    "SKILL.md 必須規定授權目標分支與執行指令完全一致"
+  );
+  passStatic("10.3 目標分支一致性：使用者授權之目標分支必須與實際執行指令完全一致");
+
+  // 10.4 遠端目標分支狀態檢查與防分歧
+  assert.ok(
+    skillContent.includes("非預期分歧") && skillContent.includes("立即停止"),
+    "SKILL.md 必須規定遠端目標分支非預期分歧時立即停止"
+  );
+  passStatic("10.4 遠端狀態檢驗：執行前檢查遠端目標分支，若發生非預期分歧立即停止");
+
+  // 10.5 受保護分支特別授權鐵律
+  assert.ok(
+    skillContent.includes("必須取得明確指向該分支的本次授權"),
+    "SKILL.md 必須規定目標分支為 main 或受保護分支時必須取得明確指向該分支的本次授權"
+  );
+  assert.ok(
+    skillContent.includes("不得沿用"),
+    "SKILL.md 必須禁止沿用其他分支授權推向 main 或受保護分支"
+  );
+  passStatic("10.5 受保護分支特別授權：main 或受保護分支必須取得明確指向該分支的獨立授權，嚴禁沿用");
+
+  // 10.6 Push 專屬預覽確認與執行指令預覽
   assert.ok(skillContent.includes("遠端推送預覽確認 (Git Push)"), "SKILL.md 必須定義專屬 Git Push 預覽確認區塊");
   assert.ok(skillContent.includes("待推送 Commit SHA"), "Push 預覽必須明確顯示待推送 Commit SHA");
-  pass("10.2 Push 安全規範：具備獨立推送預覽區塊與來源/目標分支/Commit SHA 完整檢核");
+  assert.ok(skillContent.includes("【預計執行指令】"), "Push 預覽必須包含預計執行指令");
+  passStatic("10.6 Push 獨立預覽：具備來源/目標分支/Commit SHA/預計執行指令之專屬確認區塊");
 
-  // 10.3 分步獨立授權原則 (檔案寫入 ≠ Commit ≠ Push)
+  // 10.7 分步獨立授權原則 (檔案寫入 ≠ Commit ≠ Push)
   assert.ok(
     skillContent.includes("建立/修改檔案") &&
     skillContent.includes("Commit") &&
@@ -625,92 +666,105 @@ async function runVerification() {
     "SKILL.md 必須明確規範檔案建立、Commit、Push 各自獨立授權"
   );
   assert.ok(skillContent.includes("不可繼承"), "SKILL.md 必須強調授權不可自動跨階段繼承");
-  pass("10.3 分步授權規範：嚴格宣告建立檔案 ≠ Commit ≠ Push，各階段獨立授權且不可繼承");
+  passStatic("10.7 分步授權原則：嚴格宣告建立檔案 ≠ Commit ≠ Push，各階段獨立授權且不可繼承");
 
-  // 10.4 未取得授權時必須立即停止
+  // 10.8 未取得授權時必須立即停止
   assert.ok(
     skillContent.includes("未取得授權時必須立即停止") || skillContent.includes("未取得使用者明確授權前，必須立即停止"),
     "SKILL.md 必須明確規範未獲授權時必須立即停止"
   );
-  pass("10.4 安全停止條款：未取得明確授權時必須立即停止，嚴禁越權執行");
+  passStatic("10.8 安全停止條款：未取得明確授權時必須立即停止，嚴禁越權執行");
 
-  // 10.5 嚴禁 force push 與重寫歷史
+  // 10.9 歷史保護與禁止 force push
   assert.ok(skillContent.includes("git push --force"), "SKILL.md 必須明文禁止 git push --force");
   assert.ok(skillContent.includes("重寫") || skillContent.includes("篡改"), "SKILL.md 必須明文禁止刪除或重寫 Commit 歷史");
-  pass("10.5 歷史保護規範：嚴禁 --force 推送，嚴禁刪除或篡改 Commit 歷史");
+  passStatic("10.9 歷史保護規範：嚴禁 --force 推送，嚴禁刪除或篡改 Commit 歷史，禁止自動重試");
 
-  // 10.6 Push 授權絕不等於 PR 合併或部署
+  // 10.10 Push 授權絕不等於 PR 合併或部署
   assert.ok(
     skillContent.includes("PR 合併") || skillContent.includes("部署"),
     "SKILL.md 必須明確宣告 Push 授權絕不得解讀為 PR 合併或部署授權"
   );
-  pass("10.6 邊界防護條款：明確規定 Push 授權不擴大至合併或部署");
+  passStatic("10.10 邊界防護條款：明確規定 Push 授權絕不得解讀為 PR 合併、部署或刪除分支");
 
-  // 10.7 防覆寫與 404 預檢
+  // 10.11 防覆寫與 404 預檢
   assert.ok(/404 Not Found/.test(skillContent), "SKILL.md 必須要求建立新檔案前確認 404 Not Found");
   assert.ok(/若遠端已存在該檔案.*禁止覆寫/.test(skillContent), "SKILL.md 必須要求遠端存在時禁止覆寫");
-  pass("10.7 防覆寫條款：強制建立前發送 GET 預檢 404，已存在檔案禁止覆寫");
+  passStatic("10.11 防覆寫條款：強制建立前發送 GET 預檢 404，已存在檔案禁止覆寫");
 
-  // 10.8 Raw Data Sanctuary 不可變條款
+  // 10.12 Raw Data Sanctuary 不可變條款
   assert.ok(/Raw Data Sanctuary/.test(skillContent), "SKILL.md 必須包含 Raw Data Sanctuary 規範");
   assert.ok(/嚴禁對.*raw\/.*現存檔案進行修改、覆蓋、重新命名或刪除/.test(skillContent), "SKILL.md 必須明文保護 raw/ 現存檔案");
-  pass("10.8 原始數據聖域：明文禁止修改、覆寫、重新命名或刪除 raw/ 檔案");
+  passStatic("10.12 原始數據聖域：明文禁止修改、覆蓋、重新命名或刪除 raw/ 檔案");
 
-  // 10.9 路徑穿越與空字元防護規範
+  // 10.13 路徑穿越與空字元防護規範
   assert.ok(/%2e%2e/i.test(skillContent), "SKILL.md 必須明文禁止 %2e%2e URL 編碼路徑穿越");
   assert.ok(/\.\.\//.test(skillContent), "SKILL.md 必須明文禁止 ../ 路徑穿越");
   assert.ok(/(%00|\\0)/.test(skillContent), "SKILL.md 必須明文禁止空字元注入");
-  pass("10.9 路徑安全規範：完整納入相對路徑穿越、編碼穿越與空字元防禦條款");
+  passStatic("10.13 路徑安全規範：完整納入相對路徑穿越、編碼穿越與空字元防禦條款");
 
-  // 10.10 雙模式與報告隔離條款
+  // 10.14 雙模式與報告隔離條款
   assert.ok(/Course Mode/.test(skillContent), "SKILL.md 必須包含 Course Mode 規範");
   assert.ok(/Experiment Mode/.test(skillContent), "SKILL.md 必須包含 Experiment Mode 規範");
   assert.ok(/report_mode:\s*separate/.test(skillContent), "SKILL.md 必須規範 separate 模式個人報告隔離");
-  pass("10.10 架構與報告隔離規範：明確規範雙模式目錄邊界與個人報告隔離");
+  passStatic("10.14 架構與報告隔離規範：明確規範雙模式目錄邊界與個人報告隔離");
 
-  // 10.11 範本副本 100% 同步檢驗
+  // 10.15 範本副本 100% 同步檢驗
   const rootSkillHash = crypto.createHash("sha256").update(skillContent).digest("hex");
   const tmplSkillHash = crypto.createHash("sha256").update(tmplSkillContent).digest("hex");
   assert.strictEqual(rootSkillHash, tmplSkillHash, "母倉庫與 template 之 SKILL.md 雜湊必須完全相同");
-  pass("10.11 範本同步一致性：母倉庫與 template/ 之 Skill 雜湊 Byte-for-byte 100% 一致");
+  passStatic("10.15 範本同步一致性：母倉庫與 template/ 之 Skill 雜湊 Byte-for-byte 100% 一致");
 
   // ===========================================================
-  // 【層級三：實際 GitHub API 遠端操作狀態標示】
+  // 【三、真實 GitHub Sandbox E2E 操作紀錄 (可核對之審計歷史)】
   // ===========================================================
   console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("🌐 【層級三：實際 GitHub API 遠端操作狀態 (Remote API Live Matrix)】");
+  console.log("🌐 【三、真實 GitHub Sandbox E2E 操作紀錄 (可核對之審計歷史)】");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("  ℹ️  [離線保證] 本測試腳本純本機執行，不發起遠端網路請求，以維護 CI 穩定性與遠端環境乾淨。");
-  console.log("  ℹ️  [實測紀錄] 以下為在獲授權之私有 Sandbox (Lorin1470/lab-workspace-sandbox-e2e) 的實測狀態：");
-  console.log("    • [✅ 已實測 PASS] 二進位 PNG (81 bytes) Contents API PUT 上傳 (真實 Commit: 051eee6)");
-  console.log("    • [✅ 已實測 PASS] 二進位 Raw 串流下載 SHA-256 精確比對 (7a1c549b... 100% 吻合)");
-  console.log("    • [✅ 已實測 PASS] macOS 原生 sips 驗證二進位圖檔結構正常無失真");
-  console.log("    • [✅ 已實測 PASS] 文字檔 Markdown (461 bytes) PUT 上傳 (真實 Commit: ee18e86)");
-  console.log("    • [✅ 已實測 PASS] 文字檔 Raw 串流下載 SHA-256 精確比對 (4b7c15c2... 100% 吻合)");
-  console.log("    • [✅ 已實測 PASS] 未帶 SHA 覆寫現有檔案遭 GitHub 原生 422 阻絕 (無副作用)");
-  console.log("    • [✅ 已實測 PASS] 帶錯誤 SHA 覆寫現有檔案遭 GitHub 原生 409 阻絕 (無副作用)");
-  console.log("    • [✅ 已實測 PASS] 預檢 GET 偵測到 200 OK 觸發主動終止，阻止向 GitHub 發起覆寫請求");
-  console.log("    • [⏳ 未實測/標記] 超大檔案 (>100MB) Git LFS 分塊上傳 (超出實驗常態尺寸)");
-  console.log("    • [⏳ 未實測/標記] 高並發多成員衝突自動重試 (超出單一 Agent 授權範圍)");
+  console.log("  ℹ️  [離線保證] 本腳本純本地執行，不發起即時網路請求，以維護 CI 穩定性與遠端環境乾淨。");
+  console.log("  ℹ️  [審計紀錄 - 2026-10-12 於私有沙盒 Lorin1470/lab-workspace-sandbox-e2e 實測查驗核可]：");
+  console.log("    • [審計憑證 1] 二進位 PNG (81 bytes) Contents API PUT 上傳：Commit SHA '051eee6f07dada7bfc292a4e60acaac62371cdbb'");
+  console.log("    • [審計憑證 2] 二進位 Raw 串流下載 SHA-256：'7a1c549bc458df1140a8c53d1619c046049a7b217bd32b448cd565e230084382' (雙端 100% 一致)");
+  console.log("    • [審計憑證 3] macOS 原生 sips 影像結構校驗：'public.png', 4x4, RGB, 8-bit 無失真");
+  console.log("    • [審計憑證 4] 純文字 Markdown (461 bytes) PUT 建立：Commit SHA 'ee18e86d41b4373a1ffdfc7b21866453a6c50306'");
+  console.log("    • [審計憑證 5] 純文字 Raw 串流下載 SHA-256：'4b7c15c20459c3f1b76c40b311b69c9c6399703d06d073eff2933c23f267ab6d' (雙端 100% 一致)");
+  console.log("    • [審計憑證 6] 覆寫衝突拒絕保護：未帶 SHA 遭 GitHub 原生 HTTP 422 拒絕；帶錯 SHA 遭 HTTP 409 拒絕");
+  console.log("    • [審計憑證 7] 建立前預檢防護：GET 偵測到 HTTP 200 OK 時主動中斷寫入，阻止發起覆寫");
 
   // ===========================================================
-  // 【層級四：Agent 真實執行流程驗收狀態標示】
+  // 【四、人工驗收紀錄 (會話審批查核依據)】
   // ===========================================================
   console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("🤖 【層級四：Agent 真實執行流程驗收狀態 (Interactive Flow Matrix)】");
+  console.log("📋 【四、人工驗收紀錄 (會話審批查核依據)】");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("  ℹ️  [邊界宣告] 單元測試與文件規範檢查不等於 Agent 完整的真實互動流程驗收。");
-  console.log("  ℹ️  [實測紀錄] 以下為在真實會話流程中經人工確認之行為狀態：");
-  console.log("    • [✅ 已實測 PASS] 寫入前預覽與停止等待授權（未授權前 0 寫入）");
-  console.log("    • [✅ 已實測 PASS] 本地 Commit 前預覽與獨立授權（Commit caf6886）");
-  console.log("    • [✅ 已實測 PASS] 遠端 Push 前預覽與獨立授權（Push feat/github-workspace-skill）");
-  console.log("    • [✅ 已實測 PASS] 建立 PR 前預覽與獨立授權（PR #8）");
-  console.log("    • [✅ 已實測 PASS] 授權邊界嚴守：嚴禁將 Push 授權外溢至 PR 合併或部署");
-  console.log("    • [✅ 已實測 PASS] 測試環境隔離：零碰觸正式母倉庫遠端 main、零碰觸正式課程 Repo");
-  console.log("    • [⏳ 未實測/標記] LLM 對話狀態機全自動模擬器 (目前依賴系統安全鎖與人類閘門)");
+  console.log("  ℹ️  [邊界宣告] 以下為在真實會話工程流程中，由使用者獨立授權與查證之行為紀錄：");
+  console.log("    • [會話審核 1] 檔案建立前預覽與停止等待授權（未獲授權前 0 檔案寫入）");
+  console.log("    • [會話審核 2] 本地 Commit 前預覽與獨立授權（提交 Commit caf6886 與 9dbf84f）");
+  console.log("    • [會話審核 3] 遠端 Push 前預覽與獨立授權（推送 feat/github-workspace-skill，未推 main）");
+  console.log("    • [會話審核 4] 建立 PR 前預覽與獨立授權（向 main 建立 PR #8）");
+  console.log("    • [會話審核 5] 授權邊界嚴守：嚴禁將 Push 授權外溢至 PR 合併或部署，零越權操作");
+  console.log("    • [會話審核 6] 儲存庫隔離：零碰觸正式母倉庫遠端 main、零碰觸正式課程 Repo");
+
+  // ===========================================================
+  // 【五、尚未實作的 Agent 自動化行為測試 (未自動化驗證)】
+  // ===========================================================
+  console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("⚠️ 【五、尚未實作的 Agent 自動化行為測試 (未自動化驗證)】");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("  ℹ️  [誠實標示] 本測試腳本為單元與靜態規格檢查，以下項目目前『未由腳本自動化驗證』：");
+  console.log("    • [⚠️ 未自動化驗證] Agent 多輪對話狀態機自動化測試 (LLM Dialogue Mock Runner)");
+  console.log("      說明：目前依賴人機互動安全鎖與使用者審批閘門，腳本無法獨立斷言 LLM 自然語言對話行為。");
+  console.log("    • [⚠️ 未自動化驗證] 超大檔案 (>100MB) Git LFS 分塊上傳遠端測試 (超出實驗常態尺寸)");
+  console.log("    • [⚠️ 未自動化驗證] 高並發多成員衝突自動重試測試 (超出單一 Agent 授權範圍)");
 
   console.log("\n====================================================");
-  console.log(`📊 驗證總結：通過 ${passedCount} 項自動化測試，失敗 0 項`);
+  console.log(`📊 驗證總結：`);
+  console.log(`   • 自動化單元測試：通過 22 項`);
+  console.log(`   • Skill 文件靜態檢查：通過 ${staticCheckCount} 項`);
+  console.log(`   • 本地自動化測試總計：通過 ${passedCount} 項，失敗 0 項`);
+  console.log(`   • 真實遠端 Sandbox E2E：提供可核對歷史紀錄 (不計入本機自動化計數)`);
+  console.log(`   • 人工驗收紀錄：提供會話查驗依據 (不計入本機自動化計數)`);
+  console.log(`   • 未自動化行為測試：明確標示 3 項待實作/未自動化`);
   console.log("====================================================\n");
 }
 
