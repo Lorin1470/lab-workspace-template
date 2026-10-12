@@ -765,6 +765,32 @@ const mockEnv = {
   GITHUB_APP_INSTALLATION_ID: '654321',
   GITHUB_APP_PRIVATE_KEY: testKeypairPkcs8.privateKey,
   GITHUB_APP_TEMPLATE_REPO: 'Lorin1470/lab-workspace-template',
+  CUSTOM_FETCH: async (url, options = {}) => {
+    const urlStr = String(url);
+    if (urlStr.includes('/access_tokens')) {
+      return new Response(JSON.stringify({
+        token: 'ghs_mock_frontend_token',
+        expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+      }), { status: 201 });
+    }
+    const userMatch = urlStr.match(/https:\/\/api\.github\.com\/users\/([^/?#]+)/);
+    if (userMatch) {
+      const username = decodeURIComponent(userMatch[1]);
+      if (username === 'outsider') {
+        return new Response(JSON.stringify({
+          id: 999999,
+          login: 'outsider',
+          avatar_url: 'https://avatars.githubusercontent.com/u/999999',
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        id: 20001,
+        login: username,
+        avatar_url: `https://avatars.githubusercontent.com/u/20001`,
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ message: 'OK' }), { status: 200 });
+  },
 };
 
 // 輔助函式：發送 HTTP 請求

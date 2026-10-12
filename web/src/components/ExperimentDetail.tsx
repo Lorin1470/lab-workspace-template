@@ -184,7 +184,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   const [editStatus, setEditStatus] = useState<ExperimentStatus>(experiment.status);
 
   // 新增實驗成員表單
-  const [newMemberGithubId, setNewMemberGithubId] = useState('');
   const [newMemberUsername, setNewMemberUsername] = useState('');
   const [newMemberRole, setNewMemberRole] = useState<'student' | 'assistant'>('student');
   const [newMemberGroup, setNewMemberGroup] = useState('');
@@ -330,12 +329,9 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   // 新增實驗成員
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMemberGithubId.trim() || !newMemberUsername.trim()) {
-      setModalError('請輸入 GitHub ID 與 使用者名稱');
-      return;
-    }
-    if (!/^\d+$/.test(newMemberGithubId.trim())) {
-      setModalError('GitHub ID 必須為不可變純數字識別碼 (例如：10001)，請勿填寫 Username 或英文帳號名稱');
+    const cleanUsername = newMemberUsername.trim().replace(/^@/, '');
+    if (!cleanUsername) {
+      setModalError('請輸入 GitHub 使用者名稱 (Username)');
       return;
     }
 
@@ -343,20 +339,22 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     setModalError(null);
     try {
       await api.experimentMembers.add(experiment.id, {
-        github_id: newMemberGithubId.trim(),
-        username: newMemberUsername.trim(),
+        username: cleanUsername,
         role: newMemberRole,
         group_name: newMemberGroup.trim() || undefined,
       });
-      onSuccess(`成功指派 @${newMemberUsername.trim()} 至本實驗！`);
+      onSuccess(`成功指派 @${cleanUsername} 至本實驗！`);
       setIsAddMemberOpen(false);
-      setNewMemberGithubId('');
       setNewMemberUsername('');
       setNewMemberRole('student');
       setNewMemberGroup('');
       loadMembers();
     } catch (err: any) {
-      if (err instanceof ApiError && err.status === 400) {
+      if (err instanceof ApiError && err.status === 404) {
+        setModalError(err.message || `找不到 GitHub 使用者 @${cleanUsername}，請確認帳號名稱是否正確`);
+      } else if (err instanceof ApiError && err.status === 429) {
+        setModalError('GitHub API 請求頻率已達上限，請稍後再試');
+      } else if (err instanceof ApiError && err.status === 400) {
         setModalError(err.message || '該使用者必須先註冊為本課程成員 (Course Membership)');
       } else if (err instanceof ApiError && err.status === 409) {
         setModalError('該使用者已是本實驗成員 (409 Conflict)');
@@ -1484,33 +1482,23 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             <form onSubmit={handleAddMember} className="space-y-4 text-sm">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  GitHub ID (不可變數值) <span className="text-red-500">*</span>
+                  GitHub 使用者名稱 (Username) <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  placeholder="例如：10001"
-                  value={newMemberGithubId}
-                  onChange={(e) => setNewMemberGithubId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-mono"
-                  required
-                />
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 font-mono text-sm">@</span>
+                  <input
+                    type="text"
+                    placeholder="例如：octocat 或 studentA"
+                    value={newMemberUsername}
+                    onChange={(e) => setNewMemberUsername(e.target.value)}
+                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                    required
+                    autoFocus
+                  />
+                </div>
                 <p className="text-[11px] text-slate-400 mt-1">
                   被指派者必須已登錄為本課程之活躍成員 (Course Membership)。
                 </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  GitHub 使用者名稱 (Username) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如：studentA"
-                  value={newMemberUsername}
-                  onChange={(e) => setNewMemberUsername(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                  required
-                />
               </div>
 
               <div>

@@ -11,6 +11,7 @@ import {
   syncStudentCollaborator,
   removeStudentCollaborator,
 } from './services/collaborators.ts';
+import { lookupGitHubUser } from './services/github-users.ts';
 import {
   getWorkspaceRepository,
   listFiles,
@@ -1234,21 +1235,36 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
         }
 
-        const github_id = String(body.github_id || '').trim();
-        const username = String(body.username || '').trim();
-        const role = String(body.role || '').trim();
+        const rawUsername = String(body.username || '').trim().replace(/^@/, '');
+        const role = String(body.role || 'student').trim();
+        const providedGithubId = body.github_id !== undefined && body.github_id !== null && String(body.github_id).trim() !== ''
+          ? String(body.github_id).trim()
+          : undefined;
 
-        if (!github_id || !username || !role) {
-          return new Response(JSON.stringify({ error: 'github_id, username, and role are required' }), { status: 400, headers });
+        if (!rawUsername) {
+          return new Response(JSON.stringify({ error: '請輸入 GitHub 使用者名稱 (username is required)' }), { status: 400, headers });
         }
 
-        if (!/^\d+$/.test(github_id)) {
+        if (providedGithubId && !/^\d+$/.test(providedGithubId)) {
           return new Response(JSON.stringify({ error: 'github_id must be a numeric string (e.g. 10001)' }), { status: 400, headers });
         }
 
         if (!['teacher', 'assistant', 'student'].includes(role)) {
           return new Response(JSON.stringify({ error: 'Invalid role: must be teacher, assistant, or student' }), { status: 400, headers });
         }
+
+        // 透過 GitHub API 查驗使用者存在性，並取得不可變純數字 ID 與 canonical login
+        const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+        const lookup = await lookupGitHubUser(env, rawUsername, fetchFn, providedGithubId);
+        if (!lookup.success || !lookup.user) {
+          return new Response(
+            JSON.stringify({ error: lookup.error || '無法驗證 GitHub 帳號' }),
+            { status: lookup.status || 400, headers }
+          );
+        }
+
+        const github_id = lookup.user.id;
+        const username = lookup.user.login;
 
         // 檢查 UNIQUE(course_id, github_id)
         const existingMem: any = await safeD1First(
@@ -1773,16 +1789,18 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers });
         }
 
-        const github_id = String(body.github_id || '').trim();
-        const username = String(body.username || '').trim();
+        const rawUsername = String(body.username || '').trim().replace(/^@/, '');
         const role = String(body.role || 'student').trim();
-        const group_name = body.group_name !== undefined ? String(body.group_name).trim() : null;
+        const group_name = body.group_name !== undefined && body.group_name !== null ? String(body.group_name).trim() : null;
+        const providedGithubId = body.github_id !== undefined && body.github_id !== null && String(body.github_id).trim() !== ''
+          ? String(body.github_id).trim()
+          : undefined;
 
-        if (!github_id || !username) {
-          return new Response(JSON.stringify({ error: 'github_id and username are required' }), { status: 400, headers });
+        if (!rawUsername) {
+          return new Response(JSON.stringify({ error: '請輸入 GitHub 使用者名稱 (username is required)' }), { status: 400, headers });
         }
 
-        if (!/^\d+$/.test(github_id)) {
+        if (providedGithubId && !/^\d+$/.test(providedGithubId)) {
           return new Response(JSON.stringify({ error: 'github_id must be a numeric string (e.g. 10001)' }), { status: 400, headers });
         }
 
@@ -1790,12 +1808,25 @@ export const onRequest = async (context: any) => {
           return new Response(JSON.stringify({ error: 'Invalid role: must be student or assistant' }), { status: 400, headers });
         }
 
+        // 透過 GitHub API 查驗使用者存在性，並取得不可變純數字 ID 與 canonical login
+        const fetchFn = env.CUSTOM_FETCH || env.FETCH || fetch;
+        const lookup = await lookupGitHubUser(env, rawUsername, fetchFn, providedGithubId);
+        if (!lookup.success || !lookup.user) {
+          return new Response(
+            JSON.stringify({ error: lookup.error || '無法驗證 GitHub 帳號' }),
+            { status: lookup.status || 400, headers }
+          );
+        }
+
+        const github_id = lookup.user.id;
+        const username = lookup.user.login;
+
         // 前置條件校驗：該被分配之使用者必須已是該課程 (Course) 的 active 成員！
         const courseMem: any = await safeD1First(
           env.DB.prepare('SELECT id, role FROM course_memberships WHERE course_id = ? AND github_id = ? AND status = "active"').bind(exp.course_id, github_id)
         );
         if (!courseMem) {
-          return new Response(JSON.stringify({ error: 'Bad Request: Target user is not enrolled as an active member of the course' }), { status: 400, headers });
+          return new Response(JSON.stringify({ error: `該使用者 (@${username}) 尚未註冊為本課程成員 (not enrolled in course)，請先將其加入課程` }), { status: 400, headers });
         }
 
         // 檢查 UNIQUE(experiment_id, github_id)

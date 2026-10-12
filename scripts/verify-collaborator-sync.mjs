@@ -359,6 +359,26 @@ class MockGitHubApi {
     this.deleteFailureStatus = 500;
     this.putFailureBody = { message: 'Internal GitHub Error' };
     this.nonExistentRepos = new Set();
+    this.rateLimitUser = null;
+    this.timeoutUser = null;
+    this.users = new Map([
+      ['alice_chen', { id: 2001, login: 'alice_chen', avatar_url: 'https://avatars.githubusercontent.com/u/2001' }],
+      ['bob_lin', { id: 2002, login: 'bob_lin', avatar_url: 'https://avatars.githubusercontent.com/u/2002' }],
+      ['carol_wang', { id: 2003, login: 'carol_wang', avatar_url: 'https://avatars.githubusercontent.com/u/2003' }],
+      ['david_lee', { id: 2005, login: 'david_lee', avatar_url: 'https://avatars.githubusercontent.com/u/2005' }],
+      ['eva_green', { id: 2006, login: 'eva_green', avatar_url: 'https://avatars.githubusercontent.com/u/2006' }],
+      ['frank_wu', { id: 2007, login: 'frank_wu', avatar_url: 'https://avatars.githubusercontent.com/u/2007' }],
+      ['george_tsai', { id: 2008, login: 'george_tsai', avatar_url: 'https://avatars.githubusercontent.com/u/2008' }],
+      ['prof_smith', { id: 1001, login: 'prof_smith', avatar_url: 'https://avatars.githubusercontent.com/u/1001' }],
+      ['helen_ho', { id: 2009, login: 'helen_ho', avatar_url: 'https://avatars.githubusercontent.com/u/2009' }],
+      ['ian_chen', { id: 2010, login: 'ian_chen', avatar_url: 'https://avatars.githubusercontent.com/u/2010' }],
+      ['jenny_wu', { id: 2011, login: 'jenny_wu', avatar_url: 'https://avatars.githubusercontent.com/u/2011' }],
+      ['kevin_chang', { id: 2012, login: 'kevin_chang', avatar_url: 'https://avatars.githubusercontent.com/u/2012' }],
+      ['zoe_lin', { id: 2025, login: 'zoe_lin', avatar_url: 'https://avatars.githubusercontent.com/u/2025' }],
+      ['leo_wu', { id: 2026, login: 'leo_wu', avatar_url: 'https://avatars.githubusercontent.com/u/2026' }],
+      ['new_student_kevin', { id: 3001, login: 'new_student_kevin', avatar_url: 'https://avatars.githubusercontent.com/u/3001' }],
+      ['experiment_only_student', { id: 3002, login: 'experiment_only_student', avatar_url: 'https://avatars.githubusercontent.com/u/3002' }],
+    ]);
   }
 
   fetch = async (url, options = {}) => {
@@ -391,7 +411,29 @@ class MockGitHubApi {
       );
     }
 
-    // 3. Collaborators API: PUT /repos/{owner}/{repo}/collaborators/{username}
+    // 3. User Lookup API: GET /users/{username}
+    const userMatch = urlStr.match(/https:\/\/api\.github\.com\/users\/([^/?#]+)/);
+    if (userMatch && method === 'GET') {
+      const username = decodeURIComponent(userMatch[1]).toLowerCase();
+      if (this.rateLimitUser && this.rateLimitUser.toLowerCase() === username) {
+        return new Response(JSON.stringify({ message: 'API rate limit exceeded' }), {
+          status: 429,
+          headers: { 'x-ratelimit-remaining': '0' },
+        });
+      }
+      if (this.timeoutUser && this.timeoutUser.toLowerCase() === username) {
+        const timeoutErr = new Error('The operation was aborted due to timeout');
+        timeoutErr.name = 'AbortError';
+        throw timeoutErr;
+      }
+      const u = this.users.get(username);
+      if (u) {
+        return new Response(JSON.stringify(u), { status: 200 });
+      }
+      return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+    }
+
+    // 4. Collaborators API: PUT /repos/{owner}/{repo}/collaborators/{username}
     const putCollabMatch = urlStr.match(/https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/collaborators\/([^/?#]+)/);
     if (putCollabMatch) {
       const owner = putCollabMatch[1];
@@ -1048,6 +1090,140 @@ async function runTests() {
       mockGitHub.collaborators.has('lorin1470/exp-c1-repo:leo_wu') &&
       !mockGitHub.collaborators.has('lorin1470/course-c-repo:leo_wu'),
       '28. Experiment Mode 確實驗收獨立 Repo 且未誤用課程 Repo 或 scoped path'
+    );
+
+    // 29. Course Mode 新增成員時僅傳入 username（不傳 github_id），後端自動查 GitHub API 並以數字 id (3001) 儲存，且觸發 GitHub 協作者同步
+    const addKevinCourse = await api(`/courses/${courseAId}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ username: 'new_student_kevin', role: 'student' }),
+    });
+    assertTest(
+      addKevinCourse.status === 201 &&
+      addKevinCourse.data.member?.github_id === '3001' &&
+      addKevinCourse.data.member?.username === 'new_student_kevin' &&
+      addKevinCourse.data.member?.github_permission_status === 'ready' &&
+      mockGitHub.collaborators.has('lorin1470/course-a-repo:new_student_kevin'),
+      '29. 新增成員僅輸入 username，後端自動查 GitHub API 轉為數字 ID (3001) 並同步 GitHub 權限'
+    );
+
+    // 30. 新增不存在的 GitHub 使用者 (404 Not Found) → 回傳 404 且資料庫完全不新增半成品資料
+    const nonExistentRes = await api(`/courses/${courseAId}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ username: 'definitely_non_existent_user_99999', role: 'student' }),
+    });
+    let dbHasGhostMember = false;
+    for (const m of mockD1.courseMemberships.values()) {
+      if (m.username === 'definitely_non_existent_user_99999') dbHasGhostMember = true;
+    }
+    assertTest(
+      nonExistentRes.status === 404 &&
+      !dbHasGhostMember &&
+      nonExistentRes.data.error?.includes('不存在'),
+      '30. 不存在的 GitHub 帳號遭阻絕 (404 Not Found) 且 D1 完全無殘留髒資料'
+    );
+
+    // 31. 新增格式不合法的 GitHub username → 回傳 400 Bad Request 且不呼叫外部 API
+    const initialApiCallsCount = mockGitHub.apiCalls.length;
+    const invalidFormatRes = await api(`/courses/${courseAId}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ username: 'invalid@user#name!', role: 'student' }),
+    });
+    assertTest(
+      invalidFormatRes.status === 400 &&
+      mockGitHub.apiCalls.length === initialApiCallsCount &&
+      invalidFormatRes.data.error?.includes('格式'),
+      '31. 格式不合法的 GitHub username 遭前端/後端格式阻絕 (400 Bad Request) 且無外部請求'
+    );
+
+    // 32. GitHub API 遇 Rate Limit (429 Too Many Requests) → 回傳 429 且不建立成員
+    mockGitHub.rateLimitUser = 'alice_chen_ratelimited';
+    const rateLimitRes = await api(`/courses/${courseAId}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ username: 'alice_chen_ratelimited', role: 'student' }),
+    });
+    mockGitHub.rateLimitUser = null;
+    let dbHasRateLimited = false;
+    for (const m of mockD1.courseMemberships.values()) {
+      if (m.username === 'alice_chen_ratelimited') dbHasRateLimited = true;
+    }
+    assertTest(
+      rateLimitRes.status === 429 &&
+      !dbHasRateLimited &&
+      rateLimitRes.data.error?.includes('Rate Limit'),
+      '32. GitHub API 觸發 Rate Limit 時回傳 429 且避免建立不完整成員資料'
+    );
+
+    // 33. 查詢 GitHub API 遇 Timeout (模擬逾時) → 回傳 504 且不建立成員
+    mockGitHub.timeoutUser = 'timeout_user_test';
+    const timeoutRes = await api(`/courses/${courseAId}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ username: 'timeout_user_test', role: 'student' }),
+    });
+    mockGitHub.timeoutUser = null;
+    let dbHasTimeoutMember = false;
+    for (const m of mockD1.courseMemberships.values()) {
+      if (m.username === 'timeout_user_test') dbHasTimeoutMember = true;
+    }
+    assertTest(
+      timeoutRes.status === 504 &&
+      !dbHasTimeoutMember &&
+      timeoutRes.data.error?.includes('逾時'),
+      '33. 查詢 GitHub 使用者逾時回傳 504 Gateway Timeout 且無半成品資料寫入 D1'
+    );
+
+    // 34. Experiment Mode 新增成員僅輸入 username（已加入課程之學生），自動轉為數字 ID 並觸發該實驗專屬 Repo 同步，不干擾 Course Repo
+    // 先建立實驗在 Experiment Mode 課程
+    const addKevinExp = await api(`/experiments/${expC1Id}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ username: 'leo_wu', role: 'student', group_name: 'Group 1' }),
+    });
+    // leo_wu 已經在 expC1Id 加入過，測重複衝突 409
+    assertTest(
+      addKevinExp.status === 409,
+      '34. 實驗成員重複加入回傳 409 Conflict'
+    );
+
+    // 讓 new_student_kevin 先加入 course C，再加入 expC1
+    await api(`/courses/${courseCId}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ username: 'new_student_kevin', role: 'student' }),
+    });
+    const addKevinExpC1 = await api(`/experiments/${expC1Id}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ username: 'new_student_kevin', role: 'student', group_name: '第 2 組' }),
+    });
+    assertTest(
+      addKevinExpC1.status === 201 &&
+      addKevinExpC1.data.member?.github_id === '3001' &&
+      addKevinExpC1.data.member?.username === 'new_student_kevin' &&
+      addKevinExpC1.data.member?.group_name === '第 2 組' &&
+      mockGitHub.collaborators.has('lorin1470/exp-c1-repo:new_student_kevin'),
+      '34. 實驗指派成員僅輸入 username，驗證數字 ID (3001) 正確並同步實驗 Repo，不干擾 Course Repo'
+    );
+
+    // 35. 實驗新增成員輸入尚未選修課程之有效 GitHub 帳號 → 回傳 400 Bad Request 阻絕
+    const addNonEnrolledExp = await api(`/experiments/${expC1Id}/members`, {
+      method: 'POST',
+      headers: adminCookie,
+      body: JSON.stringify({ username: 'experiment_only_student', role: 'student' }),
+    });
+    let dbHasExpOnly = false;
+    for (const m of mockD1.experimentMemberships.values()) {
+      if (m.username === 'experiment_only_student') dbHasExpOnly = true;
+    }
+    assertTest(
+      addNonEnrolledExp.status === 400 &&
+      !dbHasExpOnly &&
+      addNonEnrolledExp.data.error?.includes('尚未註冊為本課程成員'),
+      '35. 實驗新增未加入課程之學生帳號時回傳 400 Bad Request 阻絕，且無殘留資料'
     );
 
   } finally {

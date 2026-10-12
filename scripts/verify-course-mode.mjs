@@ -536,6 +536,16 @@ class MockGitHubApi {
       }
     }
 
+    const userMatch = urlStr.match(/https:\/\/api\.github\.com\/users\/([^/?#]+)/);
+    if (userMatch && method === "GET") {
+      const username = decodeURIComponent(userMatch[1]);
+      return new Response(JSON.stringify({
+        id: 1002,
+        login: username,
+        avatar_url: `https://avatars.githubusercontent.com/u/1002`,
+      }), { status: 200 });
+    }
+
     return new Response(JSON.stringify({ message: `Not handled in mock: ${method} ${urlStr}` }), {
       status: 404,
     });

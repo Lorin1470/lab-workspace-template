@@ -121,9 +121,9 @@ export interface UpdateExperimentRequest {
 }
 
 export interface AddCourseMemberRequest {
-  github_id: string;
   username: string;
-  role: 'teacher' | 'assistant' | 'student';
+  github_id?: string;
+  role?: 'teacher' | 'assistant' | 'student';
 }
 
 export interface UpdateCourseMemberRequest {
@@ -133,9 +133,9 @@ export interface UpdateCourseMemberRequest {
 }
 
 export interface AddExperimentMemberRequest {
-  github_id: string;
   username: string;
-  role: 'student' | 'assistant';
+  github_id?: string;
+  role?: 'student' | 'assistant';
   group_name?: string;
 }
 

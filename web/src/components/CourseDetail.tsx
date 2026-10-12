@@ -99,7 +99,6 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
   const [newExpReportMode, setNewExpReportMode] = useState<ReportMode>('shared');
 
   // 新增成員表單
-  const [newMemberGithubId, setNewMemberGithubId] = useState('');
   const [newMemberUsername, setNewMemberUsername] = useState('');
   const [newMemberRole, setNewMemberRole] = useState<'teacher' | 'assistant' | 'student'>('student');
 
@@ -202,12 +201,9 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
   // 新增成員
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMemberGithubId.trim() || !newMemberUsername.trim()) {
-      setModalError('請輸入 GitHub ID (數值) 與使用者名稱');
-      return;
-    }
-    if (!/^\d+$/.test(newMemberGithubId.trim())) {
-      setModalError('GitHub ID 必須為不可變純數字識別碼 (例如：10001)，請勿填寫 Username 或英文帳號名稱');
+    const cleanUsername = newMemberUsername.trim().replace(/^@/, '');
+    if (!cleanUsername) {
+      setModalError('請輸入 GitHub 使用者名稱 (Username)');
       return;
     }
 
@@ -215,18 +211,20 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
     setModalError(null);
     try {
       await api.courseMembers.add(course.id, {
-        github_id: newMemberGithubId.trim(),
-        username: newMemberUsername.trim(),
+        username: cleanUsername,
         role: newMemberRole,
       });
-      onSuccess(`成功將 @${newMemberUsername.trim()} 加入課程！`);
+      onSuccess(`成功將 @${cleanUsername} 加入課程！`);
       setIsAddMemberOpen(false);
-      setNewMemberGithubId('');
       setNewMemberUsername('');
       setNewMemberRole('student');
       loadData();
     } catch (err: any) {
-      if (err instanceof ApiError && err.status === 409) {
+      if (err instanceof ApiError && err.status === 404) {
+        setModalError(err.message || `找不到 GitHub 使用者 @${cleanUsername}，請確認帳號名稱是否正確`);
+      } else if (err instanceof ApiError && err.status === 429) {
+        setModalError('GitHub API 請求頻率已達上限，請稍後再試');
+      } else if (err instanceof ApiError && err.status === 409) {
         setModalError('該 GitHub 使用者已是本課程成員 (409 Conflict)');
       } else {
         setModalError(err.message || '新增成員失敗');
@@ -911,33 +909,23 @@ export const CourseDetail: React.FC<CourseDetailProps> = ({
             <form onSubmit={handleAddMember} className="space-y-4 text-sm">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  GitHub ID (不可變數值) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如：10001 (數值識別碼)"
-                  value={newMemberGithubId}
-                  onChange={(e) => setNewMemberGithubId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-mono"
-                  required
-                />
-                <p className="text-[11px] text-slate-400 mt-1">
-                  系統以此不可變數字識別身分，使用者更改 GitHub username 亦不受影響。
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   GitHub 使用者名稱 (Username) <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="text"
-                  placeholder="例如：studentA"
-                  value={newMemberUsername}
-                  onChange={(e) => setNewMemberUsername(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                  required
-                />
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 font-mono text-sm">@</span>
+                  <input
+                    type="text"
+                    placeholder="例如：octocat 或 studentA"
+                    value={newMemberUsername}
+                    onChange={(e) => setNewMemberUsername(e.target.value)}
+                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                    required
+                    autoFocus
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  系統將自動透過 GitHub 驗證該帳號並取得不可變數字 ID，使用者登入後即可存取本課程。
+                </p>
               </div>
 
               <div>
