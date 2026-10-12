@@ -1,14 +1,12 @@
 import React, { useState } from 'react';
 import { Course, AuthUser } from '../types/index.ts';
-import { api, ApiError } from '../api/client.ts';
+import { api } from '../api/client.ts';
 import {
   BookOpen,
-  Plus,
   Search,
   ChevronRight,
   Archive,
   EyeOff,
-  AlertCircle,
   FolderGit2,
   Lock,
   RefreshCw,
@@ -30,22 +28,8 @@ export const CourseList: React.FC<CourseListProps> = ({
   loading,
   onRefresh,
   onSelectCourse,
-  onSuccess,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-
-  // 建立課程表單狀態
-  const [newCode, setNewCode] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newSemester, setNewSemester] = useState('');
-  const [newMode, setNewMode] = useState<'course' | 'experiment'>('course');
-  const [newGithubRepo, setNewGithubRepo] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
-
-  // 登入使用者即可建立新課程工作區（同儕協作模型）
-  const canCreateCourse = user !== null;
 
   const filteredCourses = courses.filter((c) => {
     const term = searchTerm.toLowerCase().trim();
@@ -56,52 +40,6 @@ export const CourseList: React.FC<CourseListProps> = ({
       c.semester.toLowerCase().includes(term)
     );
   });
-
-  const handleCreateCourse = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCode.trim() || !newName.trim() || !newSemester.trim()) {
-      setFormError('請完整填寫課程代碼、課程名稱與開課學期');
-      return;
-    }
-
-    if (newMode === 'course') {
-      const repoRegex = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
-      if (!repoRegex.test(newGithubRepo.trim())) {
-        setFormError('課程模式必須指定有效的 GitHub Repository (owner/repo)');
-        return;
-      }
-    }
-
-    setSubmitting(true);
-    setFormError(null);
-
-    try {
-      const created = await api.courses.create({
-        course_code: newCode.trim(),
-        name: newName.trim(),
-        semester: newSemester.trim(),
-        mode: newMode,
-        github_repository: newMode === 'course' ? newGithubRepo.trim() : undefined,
-      });
-      onSuccess(`課程「${created.name} (${created.course_code})」建立成功！`);
-      setIsCreateOpen(false);
-      setNewCode('');
-      setNewName('');
-      setNewSemester('');
-      setNewMode('course');
-      setNewGithubRepo('');
-      onRefresh();
-      onSelectCourse(created);
-    } catch (err: any) {
-      if (err instanceof ApiError && err.status === 409) {
-        setFormError('衝突：此學期已存在相同課程代碼的課程 (409 Conflict)');
-      } else {
-        setFormError(err.message || '建立課程失敗');
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const getStatusBadge = (status: Course['status']) => {
     switch (status) {
@@ -146,16 +84,16 @@ export const CourseList: React.FC<CourseListProps> = ({
         <div>
           <div className="inline-flex items-center space-x-2 text-blue-600 text-xs font-semibold uppercase tracking-wider mb-1">
             <FolderGit2 className="w-4 h-4" />
-            <span>實驗課程管理體系</span>
+            <span>學生實驗工作區</span>
           </div>
-          <h2 className="text-2xl font-bold text-slate-900">實驗課程清單</h2>
+          <h2 className="text-2xl font-bold text-slate-900">我的實驗課程</h2>
           <p className="text-sm text-slate-500 mt-1">
             {user ? (
               <>
-                已登入為 <span className="font-semibold text-slate-700">@{user.username}</span>，顯示您擁有存取權限的實驗課程。
+                已登入為 <span className="font-semibold text-slate-700">@{user.username}</span>，顯示您已加入的實驗課程與專屬工作空間。
               </>
             ) : (
-              '瀏覽實驗課程索引與各學期實驗工作區。'
+              '瀏覽實驗課程索引與各學期實驗工作區。登入後即可檢視您所參與的課程。'
             )}
           </p>
         </div>
@@ -169,16 +107,6 @@ export const CourseList: React.FC<CourseListProps> = ({
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
-
-          {canCreateCourse && (
-            <button
-              onClick={() => setIsCreateOpen(true)}
-              className="inline-flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors cursor-pointer shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              <span>建立新課程</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -301,171 +229,12 @@ export const CourseList: React.FC<CourseListProps> = ({
             {searchTerm
               ? '請嘗試使用其他關鍵字或清除搜尋條件。'
               : user
-              ? '您尚未加入任何實驗課程。可點擊上方按鈕建立新課程，或請同學將您加入現有課程協作者名單。'
+              ? '您尚未加入任何實驗課程。若您是本課程學生，請確認已登入正確的 GitHub 帳號，或聯絡授課教師/助教將您加入課程協作者名單。'
               : '請先透過右上角或上方按鈕使用 GitHub 登入以檢視個人課程。'}
           </p>
-          {canCreateCourse && !searchTerm && (
-            <button
-              onClick={() => setIsCreateOpen(true)}
-              className="mt-2 inline-flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-colors cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>建立新課程</span>
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* 建立課程 Modal */}
-      {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center space-x-2">
-                <div className="bg-blue-100 text-blue-700 p-1.5 rounded-lg">
-                  <BookOpen className="w-4 h-4" />
-                </div>
-                <h3 className="text-lg font-bold text-slate-900">建立新實驗課程</h3>
-              </div>
-              <button
-                onClick={() => setIsCreateOpen(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-semibold p-1 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {formError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.2" />
-                <span>{formError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleCreateCourse} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  課程代碼 (Course Code) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如：EE201 或 PHY101"
-                  value={newCode}
-                  onChange={(e) => setNewCode(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white font-mono"
-                  required
-                />
-                <p className="text-[11px] text-slate-400 mt-1">簡短英數字識別碼</p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  課程完整名稱 <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如：電子學實驗（一）"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  開課學期 (Semester) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如：114-1 或 2026-Fall"
-                  value={newSemester}
-                  onChange={(e) => setNewSemester(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white font-mono"
-                  required
-                />
-                <p className="text-[11px] text-slate-400 mt-1">
-                  課程代碼與學期組合必須唯一 (UNIQUE)
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  儲存庫架構模式 (Repository Mode) <span className="text-red-500">*</span>
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className={`flex flex-col p-2.5 rounded-lg border text-xs cursor-pointer transition-colors ${newMode === 'course' ? 'border-blue-500 bg-blue-50/50 text-blue-900' : 'border-slate-200 hover:bg-slate-50 text-slate-700'}`}>
-                    <div className="flex items-center space-x-1.5 font-semibold">
-                      <input
-                        type="radio"
-                        name="course_mode"
-                        value="course"
-                        checked={newMode === 'course'}
-                        onChange={() => setNewMode('course')}
-                        className="text-blue-600"
-                      />
-                      <span>課程模式 (預設)</span>
-                    </div>
-                    <span className="text-[11px] text-slate-500 mt-1">全課共用單一 Repo，各實驗以目錄隔離</span>
-                  </label>
-                  <label className={`flex flex-col p-2.5 rounded-lg border text-xs cursor-pointer transition-colors ${newMode === 'experiment' ? 'border-blue-500 bg-blue-50/50 text-blue-900' : 'border-slate-200 hover:bg-slate-50 text-slate-700'}`}>
-                    <div className="flex items-center space-x-1.5 font-semibold">
-                      <input
-                        type="radio"
-                        name="course_mode"
-                        value="experiment"
-                        checked={newMode === 'experiment'}
-                        onChange={() => setNewMode('experiment')}
-                        className="text-blue-600"
-                      />
-                      <span>實驗模式 (相容)</span>
-                    </div>
-                    <span className="text-[11px] text-slate-500 mt-1">各實驗各自綁定獨立 Repo</span>
-                  </label>
-                </div>
-              </div>
-
-              {newMode === 'course' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    GitHub 儲存庫 (owner/repo) <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="例如：your-org/electronics-lab"
-                    value={newGithubRepo}
-                    onChange={(e) => setNewGithubRepo(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white font-mono"
-                    required
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    課程模式專用 GitHub 儲存庫。全體實驗將共用此儲存庫，系統會為每個實驗建立專屬工作空間。
-                  </p>
-                </div>
-              )}
-
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsCreateOpen(false)}
-                  disabled={submitting}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors cursor-pointer shadow-sm disabled:opacity-50 flex items-center space-x-1.5"
-                >
-                  {submitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                  <span>{submitting ? '建立中...' : '確認建立'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
         </div>
       )}
     </div>
   );
 };
+

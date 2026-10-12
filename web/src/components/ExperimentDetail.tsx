@@ -1,21 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Experiment,
   Course,
   ExperimentMembership,
   ActivityLogItem,
   AuthUser,
-  ReportMode,
   ExperimentStatus,
   CourseRole,
-  ProvisioningStatus,
-  ExperimentProvisioning,
-  RepositoryDetailsResponse,
-} from '../types/index.ts';
-import { api, ApiError } from '../api/client.ts';
+} from "../types/index.ts";
+import { api, ApiError } from "../api/client.ts";
 import {
   ArrowLeft,
-  Settings,
   FolderGit2,
   ExternalLink,
   Users,
@@ -23,23 +18,15 @@ import {
   FileText,
   FolderTree,
   Download,
-  UserPlus,
   RefreshCw,
   AlertCircle,
-  CheckCircle2,
   Printer,
-  Clock,
-  History,
-  X,
   ChevronDown,
-  Trash2,
-  Unlink,
-  ShieldAlert,
-  Search,
-} from 'lucide-react';
-import JSZip from 'jszip';
-import { WorkspaceManager, SimpleMarkdownViewer } from './WorkspaceManager.tsx';
-import { getReportRelativePath } from '../utils/workspace-ui.ts';
+  CheckCircle2,
+} from "lucide-react";
+import JSZip from "jszip";
+import { WorkspaceManager, SimpleMarkdownViewer } from "./WorkspaceManager.tsx";
+import { getReportRelativePath } from "../utils/workspace-ui.ts";
 
 interface ExperimentDetailProps {
   experiment: Experiment;
@@ -54,33 +41,33 @@ interface ExperimentDetailProps {
   onSuccess: (msg: string) => void;
 }
 
-type TabType = 'activity' | 'members' | 'repository' | 'report' | 'files' | 'download';
+type TabType = "files" | "report" | "activity" | "download" | "members" | "repository";
 
 const expStatusMap: Record<ExperimentStatus, { label: string; badgeClass: string; icon: string }> = {
   not_started: {
-    label: '尚未開始',
-    badgeClass: 'bg-slate-100 text-slate-600 border-slate-300',
-    icon: '⬜',
+    label: "尚未開始",
+    badgeClass: "bg-slate-100 text-slate-600 border-slate-300",
+    icon: "⬜",
   },
   in_progress: {
-    label: '實驗進行中',
-    badgeClass: 'bg-amber-50 text-amber-700 border-amber-300',
-    icon: '🟡',
+    label: "實驗進行中",
+    badgeClass: "bg-amber-50 text-amber-700 border-amber-300",
+    icon: "🟡",
   },
   data_processing: {
-    label: '資料整理中',
-    badgeClass: 'bg-blue-50 text-blue-700 border-blue-300',
-    icon: '🔵',
+    label: "資料整理中",
+    badgeClass: "bg-blue-50 text-blue-700 border-blue-300",
+    icon: "🔵",
   },
   report_writing: {
-    label: '報告撰寫中',
-    badgeClass: 'bg-orange-50 text-orange-700 border-orange-300',
-    icon: '🟠',
+    label: "報告撰寫中",
+    badgeClass: "bg-orange-50 text-orange-700 border-orange-300",
+    icon: "🟠",
   },
   completed: {
-    label: '已完成',
-    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-300',
-    icon: '🟢',
+    label: "已完成",
+    badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-300",
+    icon: "🟢",
   },
 };
 
@@ -89,49 +76,30 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   course,
   userRole,
   user,
-  initialTab = 'files',
+  initialTab = "files",
   onBack,
   onSelectExperiment,
-  onExperimentUpdated,
   onError,
   onSuccess,
 }) => {
-  const isCourseMode = course?.mode === 'course';
-  const resolvedRepo = isCourseMode ? (course?.github_repository || '') : (experiment.repository || '');
+  const isCourseMode = course?.mode === "course";
+  const resolvedRepo = isCourseMode ? (course?.github_repository || "") : (experiment.repository || "");
   const [activeTab, setActiveTab] = useState<TabType>(
-    (initialTab as any) === 'upload' ? 'files' : (initialTab || 'files')
+    (initialTab as any) === "upload" ? "files" : (initialTab || "files")
   );
   const [members, setMembers] = useState<ExperimentMembership[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [membersLoading, setMembersLoading] = useState(false);
-  const [activityLimit, setActivityLimit] = useState(50);
-
-  // 儲存庫管理狀態 (Experiment Mode 專屬)
-  const [repoDetails, setRepoDetails] = useState<RepositoryDetailsResponse | null>(null);
-  const [repoLoading, setRepoLoading] = useState(false);
-  const [isBindRepoOpen, setIsBindRepoOpen] = useState(false);
-  const [bindRepoName, setBindRepoName] = useState('');
-  const [bindRepoDesc, setBindRepoDesc] = useState('');
-  const [bindRepoPrivate, setBindRepoPrivate] = useState(true);
-  const [bindRepoAutoProvision, setBindRepoAutoProvision] = useState(true);
-
-  const [isUnbindRepoOpen, setIsUnbindRepoOpen] = useState(false);
-  const [isDeleteRepoOpen, setIsDeleteRepoOpen] = useState(false);
-  const [deleteConfirmText, setDeleteConfirmText] = useState('');
-
-  // 撤銷成員權限狀態
-  const [revokingMemberId, setRevokingMemberId] = useState<string | null>(null);
-  const [revokeConfirmMember, setRevokeConfirmMember] = useState<ExperimentMembership | null>(null);
 
   // 活動紀錄過濾狀態
-  const [activityActionFilter, setActivityActionFilter] = useState('');
-  const [activitySearchKeyword, setActivitySearchKeyword] = useState('');
+  const [activityActionFilter, setActivityActionFilter] = useState("");
+  const [activitySearchKeyword, setActivitySearchKeyword] = useState("");
 
   // 同步外部傳入的 initialTab 或當切換至其他實驗時更新
   useEffect(() => {
     if (initialTab) {
-      setActiveTab((initialTab as any) === 'upload' ? 'files' : initialTab);
+      setActiveTab((initialTab as any) === "upload" ? "files" : initialTab);
     }
   }, [experiment.id, initialTab]);
 
@@ -160,9 +128,9 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     if (!currentReportPath) {
       setReportLoading(false);
       setReportError(
-        experiment.report_mode === 'separate'
-          ? '此實驗為個別報告模式，需登入具有有效 GitHub ID 之帳號以讀取個人報告'
-          : '無法解析實驗報告路徑'
+        experiment.report_mode === "separate"
+          ? "此實驗為個別報告模式，需登入具有有效 GitHub ID 之帳號以讀取個人報告"
+          : "無法解析實驗報告路徑"
       );
       setReportContent(null);
       return;
@@ -180,7 +148,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         setReportNotFound(true);
         setReportContent(null);
       } else {
-        setReportError(err?.message || '讀取實驗報告失敗');
+        setReportError(err?.message || "讀取實驗報告失敗");
       }
     } finally {
       setReportLoading(false);
@@ -188,56 +156,16 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   }, [experiment.id, experiment.report_mode, currentReportPath]);
 
   useEffect(() => {
-    if (activeTab === 'report') {
+    if (activeTab === "report") {
       loadReport();
     }
   }, [activeTab, loadReport]);
 
-  // 權限判斷：
-  // 1. 協作者 (所有成員含學生，具備讀取、工作區操作與報告撰寫權限)
   const isCollaborator = Boolean(
     userRole ||
     course?.role ||
-    (user && members.some((m) => String(m.github_id) === String(user.github_id) && m.status === 'active'))
+    (user && members.some((m) => String(m.github_id) === String(user.github_id) && m.status === "active"))
   );
-  // 2. 實驗管理者 (教師、助教、課程建立者，具備成員指派、實驗設定與儲存庫管理權限)
-  const isManager = Boolean(
-    userRole === 'teacher' ||
-    userRole === 'assistant' ||
-    course?.role === 'teacher' ||
-    course?.role === 'assistant' ||
-    (user && course?.created_by_github_id && String(course.created_by_github_id) === String(user.github_id))
-  );
-
-  // Modal 控制
-  const [isEditExpOpen, setIsEditExpOpen] = useState(false);
-  const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
-  const [editingMember, setEditingMember] = useState<ExperimentMembership | null>(null);
-
-  // 編輯實驗表單
-  const [editName, setEditName] = useState(experiment.name);
-  const [editReportMode, setEditReportMode] = useState<ReportMode>(experiment.report_mode);
-  const [editStatus, setEditStatus] = useState<ExperimentStatus>(experiment.status);
-
-  // 新增實驗成員表單
-  const [newMemberUsername, setNewMemberUsername] = useState('');
-  const [newMemberRole, setNewMemberRole] = useState<'student' | 'assistant'>('student');
-  const [newMemberGroup, setNewMemberGroup] = useState('');
-
-  // 編輯實驗成員表單
-  const [editMemberGroup, setEditMemberGroup] = useState('');
-  const [editMemberRole, setEditMemberRole] = useState<'student' | 'assistant'>('student');
-  const [editMemberStatus, setEditMemberStatus] = useState<'active' | 'inactive'>('active');
-
-  const [formSubmitting, setFormSubmitting] = useState(false);
-  const [modalError, setModalError] = useState<string | null>(null);
-
-  // Provisioning 狀態與歷程控制
-  const [isProvisioning, setIsProvisioning] = useState(false);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [provisionHistory, setProvisionHistory] = useState<ExperimentProvisioning[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
 
   // 載入成員
   const loadMembers = async () => {
@@ -252,311 +180,51 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
     }
   };
 
-  const [syncingMemberId, setSyncingMemberId] = useState<string | null>(null);
-
-  const handleRetrySync = async (member: ExperimentMembership) => {
-    setSyncingMemberId(member.id);
-    try {
-      const res = await api.experimentMembers.sync(experiment.id, member.id);
-      if (res.sync?.status === 'ready') {
-        onSuccess(`成功為 @${member.username} 同步 GitHub 協作者權限！`);
-      } else if (res.sync?.status === 'failed') {
-        onError(res.sync.error || '同步失敗');
-      }
-      loadMembers();
-    } catch (err: any) {
-      onError(err.message || '重試同步失敗');
-    } finally {
-      setSyncingMemberId(null);
-    }
-  };
-
-  // 載入遠端儲存庫詳細資訊 (Experiment Mode)
-  const loadRepoDetails = async () => {
-    if (isCourseMode) return;
-    setRepoLoading(true);
-    try {
-      const data = await api.experiments.getRepository(experiment.id);
-      setRepoDetails(data);
-    } catch (err: any) {
-      console.error('Failed to load experiment repo details:', err);
-    } finally {
-      setRepoLoading(false);
-    }
-  };
-
-  // 載入活動日誌
+  // 載入活動紀錄
   const loadActivityLogs = async () => {
-    if (!resolvedRepo) {
-      setActivityLogs([]);
-      setLogsLoading(false);
-      return;
-    }
     setLogsLoading(true);
     try {
-      const data = await api.activity.list(
-        resolvedRepo,
+      const repoTarget = resolvedRepo || undefined;
+      const res = await api.activity.list(
+        repoTarget,
         experiment.experiment_code,
-        activityLimit,
+        50,
         {
           action: activityActionFilter || undefined,
           search: activitySearchKeyword.trim() || undefined,
         }
       );
-      setActivityLogs(data.logs || []);
-    } catch (err: any) {
+      setActivityLogs(res.logs || []);
+    } catch {
       setActivityLogs([]);
-      onError(err.message || '讀取活動日誌失敗');
     } finally {
       setLogsLoading(false);
-    }
-  };
-
-  // 綁定 / 建立實驗儲存庫 (Experiment Mode)
-  const handleBindRepository = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormSubmitting(true);
-    setModalError(null);
-    try {
-      const res = await api.experiments.bindRepository(experiment.id, {
-        repository: bindRepoName.includes('/') ? bindRepoName.trim() : undefined,
-        name: !bindRepoName.includes('/') ? bindRepoName.trim() : undefined,
-        description: bindRepoDesc.trim(),
-        private: bindRepoPrivate,
-        auto_provision: bindRepoAutoProvision,
-      });
-      onSuccess(`成功綁定儲存庫: ${res.repository}`);
-      setIsBindRepoOpen(false);
-      if (res.experiment) onExperimentUpdated(res.experiment);
-      loadRepoDetails();
-    } catch (err: any) {
-      setModalError(err.message || '綁定儲存庫失敗');
-    } finally {
-      setFormSubmitting(false);
-    }
-  };
-
-  // 解除綁定實驗儲存庫 (不刪除遠端)
-  const handleUnbindRepository = async () => {
-    setFormSubmitting(true);
-    try {
-      await api.experiments.unbindRepository(experiment.id);
-      onSuccess('已成功解除儲存庫綁定（遠端儲存庫完好保留）');
-      setIsUnbindRepoOpen(false);
-      onExperimentUpdated({ ...experiment, repository: '' });
-      loadRepoDetails();
-    } catch (err: any) {
-      onError(err.message || '解除綁定失敗');
-    } finally {
-      setFormSubmitting(false);
-    }
-  };
-
-  // 雙重確認刪除遠端儲存庫
-  const handleDeleteRepository = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormSubmitting(true);
-    setModalError(null);
-    try {
-      await api.experiments.deleteRepository(experiment.id, deleteConfirmText.trim());
-      onSuccess('遠端儲存庫已成功刪除');
-      setIsDeleteRepoOpen(false);
-      setDeleteConfirmText('');
-      onExperimentUpdated({ ...experiment, repository: '' });
-      loadRepoDetails();
-    } catch (err: any) {
-      setModalError(err.message || '刪除儲存庫失敗');
-    } finally {
-      setFormSubmitting(false);
-    }
-  };
-
-  // 撤銷實驗 GitHub 協作者權限 (具備多專案保護 Safe Retention)
-  const handleRevokeCollaborator = async (member: ExperimentMembership) => {
-    setRevokingMemberId(member.id);
-    try {
-      const res = await api.experimentMembers.revoke(experiment.id, member.id);
-      if (res.revoke?.retained) {
-        onSuccess(`@${member.username} 在其他課程或實驗仍有使用此儲存庫，系統已安全保留其 GitHub 協作者權限 (Safe Retention)`);
-      } else {
-        onSuccess(`已成功自 GitHub 儲存庫撤銷 @${member.username} 的協作者權限`);
-      }
-      setRevokeConfirmMember(null);
-      loadMembers();
-    } catch (err: any) {
-      onError(err.message || '撤銷協作者權限失敗');
-    } finally {
-      setRevokingMemberId(null);
-    }
-  };
-
-  // 從實驗名單快速移除 (設為 inactive)
-  const handleQuickDeactivate = async (member: ExperimentMembership) => {
-    try {
-      await api.experimentMembers.update(experiment.id, member.id, {
-        status: 'inactive',
-      });
-      onSuccess(`已將 @${member.username} 從實驗名單移除 (狀態設為 inactive)`);
-      loadMembers();
-    } catch (err: any) {
-      onError(err.message || '移除成員失敗');
-    }
-  };
-
-  // 載入建立歷程
-  const loadProvisionHistory = async () => {
-    setHistoryLoading(true);
-    setHistoryError(null);
-    try {
-      const data = await api.experiments.getProvisioning(experiment.id);
-      setProvisionHistory(data.history || []);
-    } catch (err: any) {
-      setHistoryError(err.message || '讀取建立紀錄失敗');
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
-
-  // 觸發遠端儲存庫建立 / 重新建立
-  const handleProvision = async () => {
-    if (isProvisioning) return;
-    setIsProvisioning(true);
-    try {
-      const res = await api.experiments.provision(experiment.id);
-      if (res.experiment) {
-        onExperimentUpdated(res.experiment);
-      }
-      if (res.already_existed) {
-        onSuccess(`儲存庫 ${res.repository?.full_name || resolvedRepo} 已存在，已自動連結至本專案！`);
-      } else {
-        onSuccess(`儲存庫 ${res.repository?.full_name || resolvedRepo} 建立成功！`);
-      }
-      loadActivityLogs();
-    } catch (err: any) {
-      const errMsg = err.message || '儲存庫建立失敗';
-      onError(errMsg);
-      try {
-        const detail = await api.experiments.get(experiment.id);
-        if (detail.experiment) {
-          onExperimentUpdated(detail.experiment);
-        }
-      } catch {}
-    } finally {
-      setIsProvisioning(false);
     }
   };
 
   useEffect(() => {
     loadMembers();
     loadActivityLogs();
-    setEditName(experiment.name);
-    setEditReportMode(experiment.report_mode);
-    setEditStatus(experiment.status);
-    if (activeTab === 'repository') loadRepoDetails();
-  }, [experiment.id, experiment.repository, course?.github_repository, activityLimit, activeTab]);
+  }, [experiment.id, experiment.repository, course?.github_repository, activeTab]);
 
   useEffect(() => {
-    if (activeTab === 'activity') {
+    if (activeTab === "activity") {
       loadActivityLogs();
     }
   }, [activityActionFilter, activitySearchKeyword]);
 
-  // 更新實驗設定
-  const handleUpdateExperiment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormSubmitting(true);
-    setModalError(null);
-    try {
-      const updated = await api.experiments.update(experiment.id, {
-        name: editName.trim(),
-        report_mode: editReportMode,
-        status: editStatus,
-      });
-      onExperimentUpdated(updated);
-      onSuccess('實驗專案設定已成功更新');
-      setIsEditExpOpen(false);
-    } catch (err: any) {
-      setModalError(err.message || '更新實驗失敗');
-    } finally {
-      setFormSubmitting(false);
-    }
-  };
-
-  // 新增實驗成員
-  const handleAddMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanUsername = newMemberUsername.trim().replace(/^@/, '');
-    if (!cleanUsername) {
-      setModalError('請輸入 GitHub 使用者名稱 (Username)');
-      return;
-    }
-
-    setFormSubmitting(true);
-    setModalError(null);
-    try {
-      await api.experimentMembers.add(experiment.id, {
-        username: cleanUsername,
-        role: newMemberRole,
-        group_name: newMemberGroup.trim() || undefined,
-      });
-      onSuccess(`成功指派 @${cleanUsername} 至本實驗！`);
-      setIsAddMemberOpen(false);
-      setNewMemberUsername('');
-      setNewMemberRole('student');
-      setNewMemberGroup('');
-      loadMembers();
-    } catch (err: any) {
-      if (err instanceof ApiError && err.status === 404) {
-        setModalError(err.message || `找不到 GitHub 使用者 @${cleanUsername}，請確認帳號名稱是否正確`);
-      } else if (err instanceof ApiError && err.status === 429) {
-        setModalError('GitHub API 請求頻率已達上限，請稍後再試');
-      } else if (err instanceof ApiError && err.status === 400) {
-        setModalError(err.message || '該使用者必須先註冊為本課程成員 (Course Membership)');
-      } else if (err instanceof ApiError && err.status === 409) {
-        setModalError('該使用者已是本實驗成員 (409 Conflict)');
-      } else {
-        setModalError(err.message || '指派成員失敗');
-      }
-    } finally {
-      setFormSubmitting(false);
-    }
-  };
-
-  // 編輯實驗成員
-  const handleUpdateMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingMember) return;
-
-    setFormSubmitting(true);
-    setModalError(null);
-    try {
-      await api.experimentMembers.update(experiment.id, editingMember.id, {
-        role: editMemberRole,
-        group_name: editMemberGroup.trim() || undefined,
-        status: editMemberStatus,
-      });
-      onSuccess(`已更新 @${editingMember.username} 的實驗分配設定`);
-      setEditingMember(null);
-      loadMembers();
-    } catch (err: any) {
-      setModalError(err.message || '更新成員失敗');
-    } finally {
-      setFormSubmitting(false);
-    }
-  };
-
   // 從真實 Workspace 讀取檔案後打包，禁止以示範內容冒充下載結果。
-  const handleDownloadZip = async (type: 'all' | 'photos' | 'raw') => {
+  const handleDownloadZip = async (type: "all" | "photos" | "raw") => {
     const zip = new JSZip();
     const prefix = `${experiment.experiment_code}-${experiment.name}`;
     try {
-      const collectFiles = async (path = ''): Promise<string[]> => {
+      const collectFiles = async (path = ""): Promise<string[]> => {
         const items = await api.workspace.listFiles(experiment.id, path || undefined);
         const files: string[] = [];
         for (const item of items) {
-          if (item.type === 'directory' || item.type === 'dir') {
+          if (item.type === "directory" || item.type === "dir") {
             files.push(...(await collectFiles(item.path)));
-          } else if (type === 'all' || item.path.startsWith(`${type}/`)) {
+          } else if (type === "all" || item.path.startsWith(`${type}/`)) {
             files.push(item.path);
           }
         }
@@ -565,7 +233,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
 
       const paths = await collectFiles();
       if (paths.length === 0) {
-        onError(`Workspace 目前沒有可下載的${type === 'all' ? '檔案' : `${type}/ 檔案`}。`);
+        onError(`Workspace 目前沒有可下載的${type === "all" ? "檔案" : `${type}/ 檔案`}。`);
         return;
       }
 
@@ -579,15 +247,15 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         }
       }
 
-      const content = await zip.generateAsync({ type: 'blob' });
+      const content = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(content);
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
       link.download = `${prefix}-${type}.zip`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (err: any) {
-      onError(err instanceof ApiError ? err.message : '無法從真實 Workspace 建立下載檔案。');
+      onError(err instanceof ApiError ? err.message : "無法從真實 Workspace 建立下載檔案。");
     }
   };
 
@@ -598,60 +266,14 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
       if (Array.isArray(parsed)) return parsed.map(String);
       return [String(parsed)];
     } catch {
-      if (raw.includes(',')) {
-        return raw.split(',').map((s) => s.trim()).filter(Boolean);
+      if (raw.includes(",")) {
+        return raw.split(",").map((s) => s.trim()).filter(Boolean);
       }
       return [raw.trim()];
     }
   };
 
   const statusInfo = expStatusMap[experiment.status] || expStatusMap.not_started;
-
-  const renderProvisioningBadge = (status?: ProvisioningStatus) => {
-    if (isCourseMode) {
-      if (course?.github_repository) {
-        return (
-          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300">
-            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-            <span>儲存庫已就緒</span>
-          </span>
-        );
-      }
-      return null;
-    }
-
-    switch (status) {
-      case 'ready':
-        return (
-          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-300">
-            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-            <span>儲存庫已就緒</span>
-          </span>
-        );
-      case 'creating':
-        return (
-          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-300">
-            <RefreshCw className="w-3 h-3 text-blue-600 animate-spin" />
-            <span>儲存庫建立中</span>
-          </span>
-        );
-      case 'failed':
-        return (
-          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-rose-50 text-rose-700 border-rose-300">
-            <AlertCircle className="w-3 h-3 text-rose-600" />
-            <span>儲存庫建立失敗</span>
-          </span>
-        );
-      case 'pending':
-      default:
-        return (
-          <span className="inline-flex items-center space-x-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-300">
-            <Clock className="w-3 h-3 text-amber-600" />
-            <span>待建立儲存庫</span>
-          </span>
-        );
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -697,8 +319,8 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                             }}
                             className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 transition-colors cursor-pointer ${
                               exp.id === experiment.id
-                                ? 'bg-blue-50/50 text-blue-700 font-semibold'
-                                : 'text-slate-700'
+                                ? "bg-blue-50/50 text-blue-700 font-semibold"
+                                : "text-slate-700"
                             }`}
                           >
                             <div className="truncate mr-2">
@@ -727,26 +349,27 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   {statusInfo.icon} {statusInfo.label}
                 </span>
                 <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                  {experiment.report_mode === 'shared' ? '共同報告模式' : '個別報告模式'}
+                  {experiment.report_mode === "shared" ? "共同報告模式" : "個別報告模式"}
                 </span>
-                {renderProvisioningBadge(experiment.provisioning_status)}
               </div>
 
               <h2 className="text-2xl font-bold text-slate-900 mt-1.5">{experiment.name}</h2>
               <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1 font-mono">
-                <a
-                  href={`https://github.com/${resolvedRepo}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-800 font-semibold"
-                >
-                  <FolderGit2 className="w-3.5 h-3.5" />
-                  <span>{resolvedRepo}</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
+                {resolvedRepo && (
+                  <a
+                    href={`https://github.com/${resolvedRepo}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-800 font-semibold"
+                  >
+                    <FolderGit2 className="w-3.5 h-3.5" />
+                    <span>{resolvedRepo}</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
                 {isCourseMode && (
                   <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
-                    工作區：{experiment.experiment_code.toUpperCase()}
+                    工作區目錄：{experiment.experiment_code.toUpperCase()}
                   </span>
                 )}
                 <span>•</span>
@@ -756,226 +379,28 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
           </div>
 
           <div className="flex items-center space-x-2 self-end md:self-auto flex-wrap">
-            {isCollaborator && (
-              <button
-                onClick={() => {
-                  loadProvisionHistory();
-                  setIsHistoryOpen(true);
-                }}
-                className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
-                title="檢視 GitHub 儲存庫建立紀錄"
-              >
-                <History className="w-3.5 h-3.5" />
-                <span>建立歷程</span>
-              </button>
-            )}
-
-            {isManager && (
-              <>
-                {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
-                  <button
-                    onClick={handleProvision}
-                    disabled={isProvisioning}
-                    className="inline-flex items-center space-x-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-xs"
-                    title="初始化遠端 GitHub 儲存庫"
-                  >
-                    <FolderGit2 className="w-3.5 h-3.5" />
-                    <span>建立儲存庫</span>
-                  </button>
-                )}
-
-                {(experiment.provisioning_status === 'creating' || isProvisioning) && (
-                  <button
-                    disabled
-                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-100 text-blue-700 px-3 py-2 rounded-lg cursor-not-allowed"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>儲存庫建立中...</span>
-                  </button>
-                )}
-
-                {experiment.provisioning_status === 'failed' && !isProvisioning && (
-                  <button
-                    onClick={handleProvision}
-                    disabled={isProvisioning}
-                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-lg transition-colors cursor-pointer shadow-sm disabled:opacity-50"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>重新建立 (Retry)</span>
-                  </button>
-                )}
-
-                <button
-                  onClick={() => {
-                    setModalError(null);
-                    setIsEditExpOpen(true);
-                  }}
-                  className="inline-flex items-center space-x-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors cursor-pointer"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  <span>實驗設定</span>
-                </button>
-              </>
-            )}
-
-            <a
-              href={`https://github.com/${resolvedRepo}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`inline-flex items-center space-x-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-colors ${
-                experiment.provisioning_status === 'ready' || isCourseMode
-                  ? 'bg-slate-900 hover:bg-slate-800 text-white'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-              }`}
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>開啟 GitHub Repo</span>
-            </a>
-          </div>
-        </div>
-
-        {/* Provisioning 狀態看板 (Course Mode 共用儲存庫；Experiment Mode 獨立儲存庫) */}
-        {isCourseMode && experiment.provisioning_status === 'ready' ? (
-          course?.github_repository && (
-            <div className="mt-4 p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-900">
-              <div className="flex items-center space-x-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <div>
-                  <span className="font-bold">課程儲存庫已就緒：</span>
-                  <span className="text-emerald-800">
-                    工作區共用課程儲存庫 <code className="font-mono font-semibold">{course.github_repository}</code>。
-                  </span>
-                </div>
-              </div>
+            {resolvedRepo && (
               <a
-                href={`https://github.com/${course.github_repository}`}
+                href={`https://github.com/${resolvedRepo}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center space-x-1 text-emerald-700 hover:text-emerald-900 font-semibold underline shrink-0"
+                className="inline-flex items-center space-x-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-colors bg-slate-900 hover:bg-slate-800 text-white"
               >
-                <span>查看 GitHub 倉庫</span>
-                <ExternalLink className="w-3 h-3" />
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>開啟 GitHub Repo</span>
               </a>
-            </div>
-          )
-        ) : (
-          <>
-            {(isProvisioning || experiment.provisioning_status === 'creating') && (
-              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between text-xs text-blue-900 animate-pulse">
-                <div className="flex items-center space-x-3">
-                  <RefreshCw className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
-                  <div>
-                    <p className="font-bold text-sm text-blue-950">
-                      遠端儲存庫建立中 (Provisioning in progress)
-                    </p>
-                    <p className="text-blue-700 mt-0.5">
-                      系統正調用 GitHub App 依據官方範本 (<span className="font-mono">Lorin1470/lab-workspace-template</span>) 初始化工作區 <span className="font-mono font-semibold">{resolvedRepo}</span>。此程序約需數秒，請稍候...
-                    </p>
-                  </div>
-                </div>
-                <div className="hidden sm:block text-right shrink-0 font-mono text-[11px] text-blue-600">
-                  狀態：creating
-                </div>
-              </div>
             )}
-
-            {experiment.provisioning_status === 'failed' && !isProvisioning && (
-              <div className="mt-4 p-4 bg-rose-50 border border-rose-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-900">
-                <div className="flex items-start space-x-3">
-                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-bold text-sm text-rose-950">
-                      遠端儲存庫建立失敗 (Provisioning Failed)
-                    </p>
-                    <p className="text-rose-800 mt-0.5">
-                      錯誤摘要：<span className="font-mono bg-rose-100 px-1.5 py-0.5 rounded">{experiment.provisioning_error || '建立儲存庫時發生未預期的錯誤，請確認組織權限與名稱'}</span>
-                    </p>
-                    <p className="text-rose-600 text-[11px] mt-1">
-                      請確認 GitHub App 是否已安裝於目標組織，或檢查儲存庫名稱是否合規。
-                    </p>
-                  </div>
-                </div>
-                {isManager && (
-                  <button
-                    onClick={handleProvision}
-                    disabled={isProvisioning}
-                    className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold transition-colors cursor-pointer shrink-0 shadow-xs"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>重新建立 (Retry)</span>
-                  </button>
-                )}
-              </div>
-            )}
-
-            {(!experiment.provisioning_status || experiment.provisioning_status === 'pending') && !isProvisioning && (
-              <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
-                <div className="flex items-start space-x-3">
-                  <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-bold text-sm text-amber-950">
-                      尚未建立遠端儲存庫 (Pending Provisioning)
-                    </p>
-                    <p className="text-amber-800 mt-0.5">
-                      目標儲存庫：<span className="font-mono font-semibold">{resolvedRepo}</span>。
-                      {isManager
-                        ? ' 管理者可直接點擊右側按鈕，系統將自動透過 GitHub App 與官方範本初始化該儲存庫。'
-                        : ' 此實驗專案尚未在 GitHub 上初始化，請待專案教師或助教完成遠端儲存庫建立。'}
-                    </p>
-                  </div>
-                </div>
-                {isManager && (
-                  <button
-                    onClick={handleProvision}
-                    disabled={isProvisioning}
-                    className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors cursor-pointer shrink-0 shadow-xs"
-                  >
-                    <FolderGit2 className="w-3.5 h-3.5" />
-                    <span>建立 GitHub 儲存庫</span>
-                  </button>
-                )}
-              </div>
-            )}
-
-            {experiment.provisioning_status === 'ready' && !isProvisioning && (
-              <div className="mt-4 p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-900">
-                <div className="flex items-center space-x-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <div>
-                    <span className="font-bold">遠端儲存庫已就緒：</span>
-                    <span className="text-emerald-800">
-                      工作區儲存庫已完成初始化。
-                      {experiment.provisioned_at && (
-                        <span className="text-emerald-700 ml-1">
-                          （就緒時間：{new Date(experiment.provisioned_at).toLocaleString()}）
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                </div>
-                <a
-                  href={`https://github.com/${resolvedRepo}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center space-x-1 text-emerald-700 hover:text-emerald-900 font-semibold underline shrink-0"
-                >
-                  <span>查看 GitHub 倉庫</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-            )}
-          </>
-        )}
+          </div>
+        </div>
 
         {/* 分頁導覽列 */}
         <div className="flex border-b border-slate-200 mt-6 -mb-6 space-x-1 overflow-x-auto">
           {[
-            { id: 'activity', label: '📋 活動紀錄 (Activity Log)', icon: Activity },
-            { id: 'members', label: `👥 實驗成員 (${members.length})`, icon: Users },
-            { id: 'repository', label: '🐙 儲存庫管理', icon: FolderGit2 },
-            { id: 'report', label: '📄 實驗報告', icon: FileText },
-            { id: 'files', label: '📁 工作區 (Workspace)', icon: FolderTree },
-            { id: 'download', label: '📥 打包下載', icon: Download },
+            { id: "files", label: "📁 工作區 (Workspace)", icon: FolderTree },
+            { id: "report", label: "📄 實驗報告", icon: FileText },
+            { id: "activity", label: "📋 活動紀錄 (Activity Log)", icon: Activity },
+            { id: "download", label: "📥 打包下載", icon: Download },
+            { id: "members", label: `👥 實驗組員 (${members.length})`, icon: Users },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -985,8 +410,8 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 onClick={() => setActiveTab(tab.id as TabType)}
                 className={`flex items-center space-x-2 py-3 px-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
                   isActive
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -999,14 +424,134 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
 
       {/* 分頁內容 */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm min-h-[420px]">
-        {/* 1. 活動紀錄 */}
-        {activeTab === 'activity' && (
+        {/* 1. 工作區 (Workspace) */}
+        {activeTab === "files" && (
+          <WorkspaceManager
+            experiment={experiment}
+            course={course}
+            user={user}
+            isCollaborator={isCollaborator}
+            onActivityRefresh={loadActivityLogs}
+            onError={onError}
+            onSuccess={onSuccess}
+          />
+        )}
+
+        {/* 2. 實驗報告 */}
+        {activeTab === "report" && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 gap-2">
+              <div className="flex items-center space-x-2 text-sm text-slate-600">
+                <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>
+                  報告檔案：
+                  <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs font-mono ml-1 text-slate-800">
+                    {currentReportPath}
+                  </code>
+                </span>
+                {reportSha && (
+                  <span className="text-[10px] font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
+                    SHA: {reportSha.slice(0, 7)}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={loadReport}
+                  disabled={reportLoading}
+                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  title="重新讀取實驗報告"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${reportLoading ? "animate-spin" : ""}`} />
+                  <span>重新整理</span>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("files")}
+                  className="inline-flex items-center space-x-1.5 text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer font-medium"
+                  title="前往工作區編輯報告"
+                >
+                  <FolderTree className="w-3.5 h-3.5" />
+                  <span>前往工作區編輯</span>
+                </button>
+
+                <button
+                  onClick={() => window.print()}
+                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>列印 / 匯出 PDF</span>
+                </button>
+              </div>
+            </div>
+
+            {reportLoading && (
+              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400">
+                <RefreshCw className="w-7 h-7 animate-spin text-blue-500" />
+                <span className="text-sm">正在載入實驗報告 ({currentReportPath})...</span>
+              </div>
+            )}
+
+            {!reportLoading && reportError && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{reportError}</span>
+                </div>
+                <button
+                  onClick={loadReport}
+                  className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-semibold transition-colors cursor-pointer"
+                >
+                  重試
+                </button>
+              </div>
+            )}
+
+            {!reportLoading && reportNotFound && (
+              <div className="border border-dashed border-slate-200 rounded-xl py-16 text-center space-y-3">
+                <FileText className="w-10 h-10 mx-auto text-slate-300" />
+                <p className="text-base font-bold text-slate-700">尚未建立實驗報告</p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                  此實驗工作區尚未建立報告檔案（<code className="font-mono text-slate-700">{currentReportPath}</code>）。
+                  您可以直接在瀏覽器工作區中建立並編輯報告，存檔後系統會自動同步至雲端。
+                </p>
+                <div className="pt-2">
+                  <button
+                    onClick={() => setActiveTab("files")}
+                    className="inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+                  >
+                    <FolderTree className="w-3.5 h-3.5" />
+                    <span>前往「📁 工作區」建立報告</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!reportLoading && !reportNotFound && !reportError && reportContent !== null && (
+              <article className="prose max-w-none text-slate-800 space-y-4">
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-sm space-y-1">
+                  <div><strong>實驗名稱</strong>：{experiment.name} ({experiment.experiment_code})</div>
+                  <div><strong>報告模式</strong>：{experiment.report_mode === "shared" ? "全組共同撰寫 (shared)" : "個別報告模式 (separate)"}</div>
+                  <div><strong>報告檔案</strong>：<code className="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded">{currentReportPath}</code></div>
+                  <div><strong>所屬 Repository</strong>：{resolvedRepo}</div>
+                </div>
+
+                <div className="border-t border-slate-100 pt-4">
+                  <SimpleMarkdownViewer content={reportContent} />
+                </div>
+              </article>
+            )}
+          </div>
+        )}
+
+        {/* 3. 活動紀錄 */}
+        {activeTab === "activity" && (
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
               <div className="space-y-0.5">
                 <div className="flex items-center space-x-2">
                   <span className="text-xs text-slate-500 font-medium">
-                    日誌規範：誰在何時以何種方式操作了什麼（Append-Only 唯讀稽核）
+                    工作區操作稽核日誌（Append-Only 唯讀紀錄）
                   </span>
                   <span className="text-[10px] font-mono bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-semibold border border-blue-100">
                     Cloudflare D1 持久化
@@ -1018,143 +563,75 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center space-x-1 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg">
-                  <Search className="w-3.5 h-3.5 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="搜尋摘要或目標..."
-                    value={activitySearchKeyword}
-                    onChange={(e) => setActivitySearchKeyword(e.target.value)}
-                    className="bg-transparent border-none outline-none text-slate-700 placeholder-slate-400 w-28 md:w-40 text-xs"
-                  />
-                </div>
+                <input
+                  type="text"
+                  placeholder="搜尋摘要、發起人或目標..."
+                  value={activitySearchKeyword}
+                  onChange={(e) => setActivitySearchKeyword(e.target.value)}
+                  className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 w-44 bg-slate-50 focus:bg-white focus:outline-none focus:border-blue-500"
+                />
 
                 <select
                   value={activityActionFilter}
                   onChange={(e) => setActivityActionFilter(e.target.value)}
-                  className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none"
+                  className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50 text-slate-700"
                 >
                   <option value="">全部動作類型</option>
                   <option value="file_created">建立檔案 (file_created)</option>
                   <option value="file_modified">更新檔案 (file_modified)</option>
                   <option value="file_deleted">刪除檔案 (file_deleted)</option>
-                  <option value="member_added">新增成員 (member_added)</option>
-                  <option value="collaborator_revoked">撤銷協作者 (collaborator_revoked)</option>
-                  <option value="repository_bound">綁定儲存庫 (repository_bound)</option>
-                  <option value="repository_unbound">解除綁定 (repository_unbound)</option>
-                  <option value="remote_repository_deleted">刪除遠端庫 (remote_repository_deleted)</option>
-                </select>
-
-                <select
-                  value={activityLimit}
-                  onChange={(e) => setActivityLimit(Number(e.target.value))}
-                  className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none"
-                >
-                  <option value={20}>20 筆</option>
-                  <option value={50}>50 筆</option>
-                  <option value={100}>100 筆</option>
+                  <option value="raw_uploaded">原始數據上傳 (raw_uploaded)</option>
+                  <option value="photo_uploaded">照片上傳 (photo_uploaded)</option>
                 </select>
 
                 <button
                   onClick={loadActivityLogs}
                   disabled={logsLoading}
-                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center space-x-1 text-xs border border-slate-200 hover:bg-slate-50 text-slate-600 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                   title="重新整理活動日誌"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${logsLoading ? 'animate-spin' : ''}`} />
-                  <span>重新整理</span>
+                  <RefreshCw className={`w-3.5 h-3.5 ${logsLoading ? "animate-spin" : ""}`} />
                 </button>
               </div>
             </div>
 
-            {logsLoading && (
+            {logsLoading ? (
               <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400">
                 <RefreshCw className="w-7 h-7 animate-spin text-blue-500" />
-                <span className="text-sm">正在載入活動紀錄...</span>
+                <span className="text-sm">正在載入活動日誌...</span>
               </div>
-            )}
-
-            {!logsLoading && activityLogs.length === 0 && (
-              <div className="border border-dashed border-slate-200 rounded-xl py-16 text-center space-y-2 text-slate-400">
-                <Activity className="w-8 h-8 mx-auto text-slate-300" />
-                <p className="text-sm font-medium text-slate-600">目前尚無活動紀錄</p>
-                <p className="text-xs text-slate-400">
-                  在本地透過 CLI 或 Agent 提交變更後，活動事件將即時記錄至 D1 稽核軌跡。
-                </p>
+            ) : activityLogs.length === 0 ? (
+              <div className="text-center py-12 text-slate-400 text-xs">
+                {activityActionFilter || activitySearchKeyword ? "找不到符合過濾條件的紀錄" : "此實驗專案目前尚無任何活動日誌。"}
               </div>
-            )}
-
-            {!logsLoading && activityLogs.length > 0 && (
-              <div className="relative border-l-2 border-slate-200 ml-4 space-y-6 py-2">
+            ) : (
+              <div className="space-y-2">
                 {activityLogs.map((log) => {
-                  const isRejected = log.action === 'request_rejected';
-                  const isPending = log.approval_status === 'pending';
-                  const isAgent = log.actor_type === 'agent';
-                  const filesChanged = parseFilesChanged(log.files_changed);
-
                   let detailsObj: any = null;
-                  if (log.details_json) {
-                    try {
-                      detailsObj =
-                        typeof log.details_json === 'object'
-                          ? log.details_json
-                          : JSON.parse(log.details_json);
-                    } catch {
-                      // ignore
-                    }
-                  }
+                  try {
+                    if (log.details_json) detailsObj = JSON.parse(log.details_json);
+                  } catch {}
+
+                  const filesChanged = parseFilesChanged(log.files_changed);
+                  const isRejected = log.approval_status === "rejected";
 
                   return (
-                    <div key={log.id} className="relative pl-6">
-                      <div
-                        className={`absolute -left-[9px] top-1 w-4 h-4 rounded-full border-2 border-white shadow-xs ${
-                          isRejected
-                            ? 'bg-red-500'
-                            : isAgent
-                            ? 'bg-purple-600'
-                            : 'bg-blue-600'
-                        }`}
-                      />
-                      <div className="space-y-1.5">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs font-bold text-slate-800">{log.actor_name}</span>
-
-                          <span
-                            className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${
-                              isAgent
-                                ? 'bg-purple-100 text-purple-700'
-                                : log.actor_type === 'web'
-                                ? 'bg-emerald-100 text-emerald-700'
-                                : 'bg-blue-100 text-blue-700'
-                            }`}
-                          >
-                            {log.actor_type.toUpperCase()}
+                    <div
+                      key={log.id}
+                      className={`p-3.5 rounded-xl border transition-colors flex items-start space-x-3 ${
+                        isRejected
+                          ? "border-red-200 bg-red-50/40"
+                          : "border-slate-200 bg-white hover:bg-slate-50/60"
+                      }`}
+                    >
+                      <div className="flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="text-xs font-bold text-slate-900 font-mono">
+                            @{log.actor_name || log.actor_id}
                           </span>
-
-                          {detailsObj?.execution_mode === 'bot_delegated' && (
-                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
-                              <span>🤖 GitHub App Bot 代為執行</span>
-                              {detailsObj?.initiated_by?.username && (
-                                <span>(發起者: @{detailsObj.initiated_by.username})</span>
-                              )}
-                            </span>
-                          )}
-
-                          {isRejected && (
-                            <span className="text-[10px] bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.2 rounded font-semibold">
-                              🚨 越權拒絕
-                            </span>
-                          )}
-                          {isPending && (
-                            <span className="text-[10px] bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.2 rounded font-semibold">
-                              ⏳ 等待核准
-                            </span>
-                          )}
-                          {log.approval_status === 'approved' && !isRejected && (
-                            <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded font-semibold">
-                              ✓ 已授權
-                            </span>
-                          )}
+                          <span className="text-[11px] px-2 py-0.5 rounded font-mono font-semibold bg-slate-100 text-slate-700">
+                            {log.action}
+                          </span>
 
                           <span className="text-xs text-slate-400 font-mono">{log.timestamp}</span>
                         </div>
@@ -1210,27 +687,64 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
           </div>
         )}
 
-        {/* 2. 實驗成員 */}
-        {activeTab === 'members' && (
+        {/* 4. 打包下載 */}
+        {activeTab === "download" && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-slate-500">
-                指派至本實驗的組員清單（必須為所屬課程的 Active 成員）。
-              </p>
-
-              {isManager && (
+            <p className="text-sm text-slate-500">
+              免經 R2 中轉的一鍵打包串流下載：
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 transition-colors">
+                <div>
+                  <h4 className="font-semibold text-sm text-slate-800">📸 打包下載全部照片</h4>
+                  <p className="text-xs text-slate-400 mt-1">打包 photos/ 目錄中的所有量測照片</p>
+                </div>
                 <button
-                  onClick={() => {
-                    setModalError(null);
-                    setIsAddMemberOpen(true);
-                  }}
-                  className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg transition-colors cursor-pointer shadow-sm"
+                  onClick={() => handleDownloadZip("photos")}
+                  className="mt-4 w-full bg-slate-100 hover:bg-blue-50 hover:text-blue-600 text-slate-700 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
                 >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>指派成員至實驗</span>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>下載 photos.zip</span>
                 </button>
-              )}
+              </div>
+
+              <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 transition-colors">
+                <div>
+                  <h4 className="font-semibold text-sm text-slate-800">📁 下載量測原始數據</h4>
+                  <p className="text-xs text-slate-400 mt-1">打包 raw/ 目錄中的所有原始 CSV/數據</p>
+                </div>
+                <button
+                  onClick={() => handleDownloadZip("raw")}
+                  className="mt-4 w-full bg-slate-100 hover:bg-emerald-50 hover:text-emerald-600 text-slate-700 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>下載 raw.zip</span>
+                </button>
+              </div>
+
+              <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 transition-colors">
+                <div>
+                  <h4 className="font-semibold text-sm text-slate-800">📦 下載完整實驗專案包</h4>
+                  <p className="text-xs text-slate-400 mt-1">包含所有數據、圖表、報告與工作區檔案</p>
+                </div>
+                <button
+                  onClick={() => handleDownloadZip("all")}
+                  className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>下載完整 ZIP</span>
+                </button>
+              </div>
             </div>
+          </div>
+        )}
+
+        {/* 5. 實驗成員 (唯讀名單) */}
+        {activeTab === "members" && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-500">
+              指派至本實驗的組員清單。
+            </p>
 
             {membersLoading ? (
               <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400 bg-white rounded-xl border border-slate-200">
@@ -1248,8 +762,6 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                         <th className="px-5 py-3">角色</th>
                         <th className="px-5 py-3">組別 (Group)</th>
                         <th className="px-5 py-3">狀態</th>
-                        <th className="px-5 py-3">GitHub 權限</th>
-                        {isManager && <th className="px-5 py-3 text-right">操作</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1268,14 +780,14 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                             <td className="px-5 py-3.5 font-mono text-xs text-slate-500">{m.github_id}</td>
                             <td className="px-5 py-3.5">
                               <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                {m.role === 'assistant' ? '助教' : '學生'}
+                                {m.role === "assistant" ? "助教" : "學生"}
                               </span>
                             </td>
                             <td className="px-5 py-3.5 font-medium text-slate-700">
                               {m.group_name || <span className="text-slate-400 text-xs">未分組</span>}
                             </td>
                             <td className="px-5 py-3.5">
-                              {m.status === 'active' ? (
+                              {m.status === "active" ? (
                                 <span className="inline-flex items-center space-x-1 text-xs text-emerald-700">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                   <span>正常</span>
@@ -1287,120 +799,13 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                                 </span>
                               )}
                             </td>
-                            <td className="px-5 py-3.5">
-                              {m.role !== 'student' ? (
-                                <span className="text-xs text-slate-400" title="非學生，毋須 GitHub 協作者權限">
-                                  —
-                                </span>
-                              ) : m.github_permission_status === 'ready' ? (
-                                <span
-                                  className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                  title={m.github_synced_at ? `已於 ${m.github_synced_at.slice(0, 19).replace('T', ' ')} 同步 push 權限` : '已同步 push 權限'}
-                                >
-                                  <span>✓ 已同步</span>
-                                </span>
-                              ) : m.github_permission_status === 'pending' ? (
-                                <div className="inline-flex items-center space-x-1.5">
-                                  <span
-                                    className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200"
-                                    title="正在向 GitHub 同步協作者權限"
-                                  >
-                                    <RefreshCw className={`w-3 h-3 ${syncingMemberId === m.id ? 'animate-spin' : ''}`} />
-                                    <span>{syncingMemberId === m.id ? '同步處理中' : '待同步 / 同步中'}</span>
-                                  </span>
-                                  {isManager && (
-                                    <button
-                                      onClick={() => handleRetrySync(m)}
-                                      disabled={syncingMemberId === m.id}
-                                      className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50 cursor-pointer"
-                                      title="若同步狀態長時間停滯，點擊手動觸發 GitHub 協作者同步"
-                                    >
-                                      {syncingMemberId === m.id ? '同步中...' : '重新同步'}
-                                    </button>
-                                  )}
-                                </div>
-                              ) : m.github_permission_status === 'failed' ? (
-                                <div className="inline-flex items-center space-x-1.5">
-                                  <span
-                                    className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-red-50 text-red-700 border border-red-200 cursor-help"
-                                    title={m.github_permission_error || 'GitHub 協作者同步失敗'}
-                                  >
-                                    <span>✗ 同步失敗</span>
-                                  </span>
-                                  {isManager && (
-                                    <button
-                                      onClick={() => handleRetrySync(m)}
-                                      disabled={syncingMemberId === m.id}
-                                      className="text-xs text-blue-600 hover:text-blue-800 underline disabled:opacity-50 cursor-pointer"
-                                      title="點擊重新同步 GitHub 協作者權限"
-                                    >
-                                      {syncingMemberId === m.id ? '同步中...' : '重試'}
-                                    </button>
-                                  )}
-                                </div>
-                              ) : m.github_permission_status === 'removed' ? (
-                                <span
-                                  className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-500 border border-slate-200"
-                                  title="已從 GitHub Repository 協作者名單移除"
-                                >
-                                  <span>— 已移除</span>
-                                </span>
-                              ) : (
-                                <span className="text-xs text-slate-400">待同步</span>
-                              )}
-                            </td>
-                            {isManager && (
-                              <td className="px-5 py-3.5 text-right whitespace-nowrap space-x-2">
-                                <button
-                                  onClick={() => {
-                                    setEditingMember(m);
-                                    setEditMemberRole(m.role);
-                                    setEditMemberGroup(m.group_name || '');
-                                    setEditMemberStatus(m.status as any);
-                                    setModalError(null);
-                                  }}
-                                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 p-1 rounded hover:bg-blue-50 transition-colors cursor-pointer"
-                                  title="修改成員分組或狀態"
-                                >
-                                  編輯
-                                </button>
-                                {m.status === 'active' && (
-                                  <button
-                                    onClick={() => handleQuickDeactivate(m)}
-                                    className="text-xs font-semibold text-amber-600 hover:text-amber-800 p-1 rounded hover:bg-amber-50 transition-colors cursor-pointer"
-                                    title="從實驗名單移除 (設為停用)"
-                                  >
-                                    從名單移除
-                                  </button>
-                                )}
-                                {m.role === 'student' && m.github_permission_status === 'ready' && (
-                                  isCourseMode ? (
-                                    <span
-                                      className="text-xs text-slate-400 cursor-help"
-                                      title="Course Mode 下 GitHub 權限由課程統一管理，請至課程頁面撤銷"
-                                    >
-                                      課程統一權限
-                                    </span>
-                                  ) : experiment.repository ? (
-                                    <button
-                                      onClick={() => setRevokeConfirmMember(m)}
-                                      disabled={revokingMemberId === m.id}
-                                      className="text-xs font-semibold text-rose-600 hover:text-rose-800 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-50"
-                                      title="從實驗 GitHub 儲存庫撤銷協作者權限 (具備多專案保護 Safe Retention)"
-                                    >
-                                      {revokingMemberId === m.id ? '撤銷中...' : '撤銷 GitHub 權限'}
-                                    </button>
-                                  ) : null
-                                )}
-                              </td>
-                            )}
                           </tr>
                         );
                       })}
                       {members.length === 0 && (
                         <tr>
-                          <td colSpan={isManager ? 7 : 6} className="text-center py-8 text-slate-400 text-xs">
-                            目前尚未指派成員至本實驗專案
+                          <td colSpan={5} className="text-center py-8 text-slate-400 text-xs">
+                            目前尚無任何實驗組員
                           </td>
                         </tr>
                       )}
@@ -1411,881 +816,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             )}
           </div>
         )}
-
-        {/* 2.5 儲存庫管理 (Repository) */}
-        {activeTab === 'repository' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-4">
-              <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-100 pb-4 gap-3">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
-                    <FolderGit2 className="w-5 h-5 text-blue-600" />
-                    <span>{isCourseMode ? '課程共用儲存庫資訊' : '實驗專屬儲存庫配置 (Experiment Repository)'}</span>
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {isCourseMode
-                      ? `Course Mode 架構：本實驗工作區隸屬於課程共用儲存庫，目錄劃分為 /${experiment.experiment_code}。儲存庫配置由課程層級統一管理。`
-                      : 'Experiment Mode 架構：本實驗具備獨立的遠端 GitHub Repository 與專屬 Git 協作者名單。'}
-                  </p>
-                </div>
-                {!isCourseMode && (
-                  <button
-                    onClick={loadRepoDetails}
-                    disabled={repoLoading}
-                    className="inline-flex items-center space-x-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer self-start md:self-auto"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${repoLoading ? 'animate-spin' : ''}`} />
-                    <span>重新整理遠端資訊</span>
-                  </button>
-                )}
-              </div>
-
-              {resolvedRepo ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-2">
-                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">儲存庫全名</span>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-base font-mono font-bold text-slate-900">{resolvedRepo}</span>
-                        <a
-                          href={`https://github.com/${resolvedRepo}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:text-blue-800"
-                          title="在 GitHub 開啟"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
-                      </div>
-                      {isCourseMode && (
-                        <p className="text-xs text-slate-500 font-mono">
-                          工作區子目錄: /{experiment.experiment_code}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-2">
-                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">GitHub 遠端狀態</span>
-                      {repoLoading ? (
-                        <div className="flex items-center space-x-2 text-xs text-slate-400">
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500" />
-                          <span>正在查詢 GitHub API...</span>
-                        </div>
-                      ) : repoDetails?.remote ? (
-                        <div className="space-y-1 text-xs">
-                          <div className="flex items-center space-x-2">
-                            <span className={`px-2 py-0.5 rounded font-medium ${repoDetails.remote.private ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                              {repoDetails.remote.private ? 'Private (私人)' : 'Public (公開)'}
-                            </span>
-                            <span className="font-mono text-slate-600">預設分支: {repoDetails.remote.default_branch}</span>
-                          </div>
-                          <div className="text-slate-500 text-[11px]">
-                            權限: {repoDetails.remote.permissions?.admin ? 'Admin (管理員)' : ''} {repoDetails.remote.permissions?.push ? 'Push (寫入)' : '唯讀'}
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-slate-500">
-                          {isCourseMode ? '請至課程頁面檢視詳細遠端狀態' : '已綁定至專案，點擊重新整理可查詢遠端狀態'}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {!isCourseMode && isManager && (
-                    <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
-                      <div className="text-xs text-slate-500">
-                        可自由解除綁定或刪除遠端儲存庫。解除綁定將保留 GitHub 上的程式庫。
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => setIsUnbindRepoOpen(true)}
-                          className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors cursor-pointer"
-                        >
-                          <Unlink className="w-3.5 h-3.5" />
-                          <span>解除綁定 (保留遠端庫)</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            setDeleteConfirmText('');
-                            setModalError(null);
-                            setIsDeleteRepoOpen(true);
-                          }}
-                          className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>刪除遠端儲存庫</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-center py-10 space-y-3">
-                  <FolderGit2 className="w-10 h-10 mx-auto text-slate-300" />
-                  <h4 className="text-sm font-semibold text-slate-800">本實驗尚未綁定 GitHub 儲存庫</h4>
-                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                    您可以在此綁定既有的 GitHub 儲存庫，或透過官方範本自動建立全新的實驗專屬儲存庫。
-                  </p>
-                  {!isCourseMode && isManager && (
-                    <div className="pt-2">
-                      <button
-                        onClick={() => {
-                          setBindRepoName('');
-                          setBindRepoDesc(`Workspace for experiment ${experiment.experiment_code}`);
-                          setBindRepoPrivate(true);
-                          setBindRepoAutoProvision(true);
-                          setModalError(null);
-                          setIsBindRepoOpen(true);
-                        }}
-                        className="inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-                      >
-                        <FolderGit2 className="w-3.5 h-3.5" />
-                        <span>配置 / 建立實驗儲存庫</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* 3. 查看報告 */}
-        {activeTab === 'report' && (
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 gap-2">
-              <div className="flex items-center space-x-2 text-sm text-slate-600">
-                <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                <span>
-                  報告檔案：
-                  <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs font-mono ml-1 text-slate-800">
-                    {currentReportPath}
-                  </code>
-                </span>
-                {reportSha && (
-                  <span className="text-[10px] font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
-                    SHA: {reportSha.slice(0, 7)}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={loadReport}
-                  disabled={reportLoading}
-                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                  title="重新讀取實驗報告"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${reportLoading ? 'animate-spin' : ''}`} />
-                  <span>重新整理</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('files')}
-                  className="inline-flex items-center space-x-1.5 text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer font-medium"
-                  title="前往工作區編輯報告"
-                >
-                  <FolderTree className="w-3.5 h-3.5" />
-                  <span>前往工作區編輯</span>
-                </button>
-
-                <button
-                  onClick={() => window.print()}
-                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>列印 / 匯出 PDF</span>
-                </button>
-              </div>
-            </div>
-
-            {reportLoading && (
-              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400">
-                <RefreshCw className="w-7 h-7 animate-spin text-blue-500" />
-                <span className="text-sm">正在載入實驗報告 ({currentReportPath})...</span>
-              </div>
-            )}
-
-            {!reportLoading && reportError && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{reportError}</span>
-                </div>
-                <button
-                  onClick={loadReport}
-                  className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-semibold transition-colors cursor-pointer"
-                >
-                  重試
-                </button>
-              </div>
-            )}
-
-            {!reportLoading && reportNotFound && (
-              <div className="border border-dashed border-slate-200 rounded-xl py-16 text-center space-y-3">
-                <FileText className="w-10 h-10 mx-auto text-slate-300" />
-                <p className="text-base font-bold text-slate-700">尚未建立實驗報告</p>
-                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-                  此實驗工作區尚未建立報告檔案（<code className="font-mono text-slate-700">{currentReportPath}</code>）。
-                  您可以直接在瀏覽器工作區中建立並編輯報告，存檔後系統會自動同步至雲端。
-                </p>
-                <div className="pt-2">
-                  <button
-                    onClick={() => setActiveTab('files')}
-                    className="inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-                  >
-                    <FolderTree className="w-3.5 h-3.5" />
-                    <span>前往「📁 工作區」建立報告</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {!reportLoading && !reportNotFound && !reportError && reportContent !== null && (
-              <article className="prose max-w-none text-slate-800 space-y-4">
-                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-sm space-y-1">
-                  <div><strong>實驗名稱</strong>：{experiment.name} ({experiment.experiment_code})</div>
-                  <div><strong>報告模式</strong>：{experiment.report_mode === 'shared' ? '全組共同撰寫 (shared)' : '個別報告模式 (separate)'}</div>
-                  <div><strong>報告檔案</strong>：<code className="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded">{currentReportPath}</code></div>
-                  <div><strong>所屬 Repository</strong>：{resolvedRepo}</div>
-                </div>
-
-                <div className="border-t border-slate-100 pt-4">
-                  <SimpleMarkdownViewer content={reportContent} />
-                </div>
-              </article>
-            )}
-          </div>
-        )}
-
-        {/* 4. 實驗 GitHub 工作區 (Workspace) */}
-        {activeTab === 'files' && (
-          <WorkspaceManager
-            experiment={experiment}
-            course={course}
-            user={user}
-            isCollaborator={isCollaborator}
-            onActivityRefresh={loadActivityLogs}
-            onError={onError}
-            onSuccess={onSuccess}
-          />
-        )}
-
-        {/* 5. 打包下載 */}
-        {activeTab === 'download' && (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-500">
-              免經 R2 中轉的一鍵打包串流下載：
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 transition-colors">
-                <div>
-                  <h4 className="font-semibold text-sm text-slate-800">📸 打包下載全部照片</h4>
-                  <p className="text-xs text-slate-400 mt-1">打包 photos/ 目錄中的所有量測照片</p>
-                </div>
-                <button
-                  onClick={() => handleDownloadZip('photos')}
-                  className="mt-4 w-full bg-slate-100 hover:bg-blue-50 hover:text-blue-600 text-slate-700 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>下載 photos.zip</span>
-                </button>
-              </div>
-
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 transition-colors">
-                <div>
-                  <h4 className="font-semibold text-sm text-slate-800">📁 下載量測原始數據</h4>
-                  <p className="text-xs text-slate-400 mt-1">打包 raw/ 目錄中的所有原始 CSV/數據</p>
-                </div>
-                <button
-                  onClick={() => handleDownloadZip('raw')}
-                  className="mt-4 w-full bg-slate-100 hover:bg-emerald-50 hover:text-emerald-600 text-slate-700 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>下載 raw.zip</span>
-                </button>
-              </div>
-
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 transition-colors">
-                <div>
-                  <h4 className="font-semibold text-sm text-slate-800">📦 下載完整實驗專案包</h4>
-                  <p className="text-xs text-slate-400 mt-1">包含所有數據、圖表、報告與 Skill 設定</p>
-                </div>
-                <button
-                  onClick={() => handleDownloadZip('all')}
-                  className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>下載完整 ZIP</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
-
-      {/* 編輯實驗 Modal */}
-      {isEditExpOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-bold text-slate-900">編輯實驗專案設定</h3>
-              <button onClick={() => setIsEditExpOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-
-            {modalError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.2" />
-                <span>{modalError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleUpdateExperiment} className="space-y-4 text-sm">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">實驗名稱</label>
-                <input
-                  type="text"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">報告撰寫模式</label>
-                <select
-                  value={editReportMode}
-                  onChange={(e) => setEditReportMode(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                >
-                  <option value="shared">共同報告模式 (Shared - 全組共編 report.md)</option>
-                  <option value="separate">個別報告模式 (Separate - 依不可變 GitHub ID 各自編寫)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">實驗進度狀態</label>
-                <select
-                  value={editStatus}
-                  onChange={(e) => setEditStatus(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                >
-                  <option value="not_started">尚未開始 (not_started)</option>
-                  <option value="in_progress">實驗進行中 (in_progress)</option>
-                  <option value="data_processing">資料整理中 (data_processing)</option>
-                  <option value="report_writing">報告撰寫中 (report_writing)</option>
-                  <option value="completed">已完成 (completed)</option>
-                </select>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditExpOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={formSubmitting}
-                  className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50"
-                >
-                  {formSubmitting ? '儲存中...' : '儲存變更'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 指派實驗成員 Modal */}
-      {isAddMemberOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-bold text-slate-900">指派成員至本實驗</h3>
-              <button onClick={() => setIsAddMemberOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-
-            {modalError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.2" />
-                <span>{modalError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleAddMember} className="space-y-4 text-sm">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  GitHub 使用者名稱 (Username) <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 font-mono text-sm">@</span>
-                  <input
-                    type="text"
-                    placeholder="例如：octocat 或 studentA"
-                    value={newMemberUsername}
-                    onChange={(e) => setNewMemberUsername(e.target.value)}
-                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-mono"
-                    required
-                    autoFocus
-                  />
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  被指派者必須已登錄為本課程之活躍成員 (Course Membership)。
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">協作者權限</label>
-                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                  所有加入實驗的成員均使用相同的 Workspace 操作權限。
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  實驗分組名稱 (選填)
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如：第 3 組 或 Group A"
-                  value={newMemberGroup}
-                  onChange={(e) => setNewMemberGroup(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                >
-                </input>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAddMemberOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={formSubmitting}
-                  className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50"
-                >
-                  {formSubmitting ? '指派中...' : '確認指派'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 修改實驗成員 Modal */}
-      {editingMember && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-bold text-slate-900">
-                管理實驗成員：@{editingMember.username}
-              </h3>
-              <button onClick={() => setEditingMember(null)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-
-            {modalError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.2" />
-                <span>{modalError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleUpdateMember} className="space-y-4 text-sm">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">分組名稱</label>
-                <input
-                  type="text"
-                  placeholder="例如：第 1 組"
-                  value={editMemberGroup}
-                  onChange={(e) => setEditMemberGroup(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">協作者權限</label>
-                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                  成員之間沒有階級式權限差異。
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">狀態</label>
-                <select
-                  value={editMemberStatus}
-                  onChange={(e) => setEditMemberStatus(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500"
-                >
-                  <option value="active">正常 (Active)</option>
-                  <option value="inactive">停用 (Inactive)</option>
-                </select>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingMember(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={formSubmitting}
-                  className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50"
-                >
-                  {formSubmitting ? '儲存中...' : '儲存變更'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 儲存庫建立歷程 Modal */}
-      {isHistoryOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-xl w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
-                  <History className="w-5 h-5 text-blue-600" />
-                  <span>GitHub 儲存庫建立紀錄</span>
-                </h3>
-                <p className="text-xs text-slate-500 font-mono mt-0.5">
-                  {resolvedRepo} ({experiment.experiment_code})
-                </p>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={loadProvisionHistory}
-                  disabled={historyLoading}
-                  className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                  title="重新整理歷程"
-                >
-                  <RefreshCw className={`w-4 h-4 ${historyLoading ? 'animate-spin' : ''}`} />
-                </button>
-                <button
-                  onClick={() => setIsHistoryOpen(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {historyError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>{historyError}</span>
-              </div>
-            )}
-
-            {historyLoading ? (
-              <div className="flex flex-col items-center justify-center py-10 space-y-2 text-slate-400">
-                <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
-                <span className="text-xs">載入建立紀錄中...</span>
-              </div>
-            ) : provisionHistory.length === 0 ? (
-              <div className="text-center py-10 text-slate-400 text-xs">
-                <History className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                <span>尚未有此儲存庫的建立歷程紀錄</span>
-              </div>
-            ) : (
-              <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
-                {provisionHistory.map((item, idx) => (
-                  <div
-                    key={item.id || idx}
-                    className="p-3.5 rounded-lg border border-slate-200 bg-slate-50/50 space-y-1.5 text-xs"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        {renderProvisioningBadge(item.status)}
-                        <span className="font-mono text-slate-500 text-[11px]">{item.repository}</span>
-                      </div>
-                      <span className="text-[11px] text-slate-400">
-                        {new Date(item.created_at).toLocaleString()}
-                      </span>
-                    </div>
-
-                    {item.error_summary && (
-                      <div className="bg-rose-50 border border-rose-200 rounded p-2 text-[11px] text-rose-800 font-mono mt-1">
-                        錯誤摘要：{item.error_summary}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="pt-3 border-t border-slate-100 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsHistoryOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
-              >
-                關閉
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 建立 / 綁定實驗儲存庫 Modal */}
-      {isBindRepoOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
-                <FolderGit2 className="w-5 h-5 text-blue-600" />
-                <span>配置實驗儲存庫</span>
-              </h3>
-              <button onClick={() => setIsBindRepoOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-
-            {modalError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.2" />
-                <span>{modalError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleBindRepository} className="space-y-4 text-sm">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  儲存庫名稱或路徑 (owner/repo 或 repo-name) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如：my-org/exp-physics-01 或 exp-physics-01"
-                  value={bindRepoName}
-                  onChange={(e) => setBindRepoName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 font-mono text-xs"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">說明描述</label>
-                <input
-                  type="text"
-                  placeholder="例如：物理實驗一專屬工作區"
-                  value={bindRepoDesc}
-                  onChange={(e) => setBindRepoDesc(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 text-xs"
-                />
-              </div>
-
-              <div className="space-y-2 pt-1">
-                <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={bindRepoPrivate}
-                    onChange={(e) => setBindRepoPrivate(e.target.checked)}
-                    className="rounded text-blue-600"
-                  />
-                  <span>設為私人儲存庫 (Private Repository)</span>
-                </label>
-
-                <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={bindRepoAutoProvision}
-                    onChange={(e) => setBindRepoAutoProvision(e.target.checked)}
-                    className="rounded text-blue-600"
-                  />
-                  <span>若儲存庫不存在，透過 GitHub App 自動在 GitHub 建立</span>
-                </label>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsBindRepoOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={formSubmitting}
-                  className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50"
-                >
-                  {formSubmitting ? '處理中...' : '確認綁定'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 解除綁定 Modal */}
-      {isUnbindRepoOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
-                <Unlink className="w-5 h-5 text-amber-600" />
-                <span>解除儲存庫綁定 (Unbind)</span>
-              </h3>
-              <button onClick={() => setIsUnbindRepoOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 space-y-1">
-              <div className="font-semibold">⚠️ 這是安全解除綁定操作</div>
-              <p>
-                解除綁定只會清除系統資料庫中的儲存庫關聯，<strong>絕對不會刪除</strong> GitHub 上的實際儲存庫、Commit 歷程或檔案內容。歷史活動紀錄亦完整保留。
-              </p>
-            </div>
-
-            <p className="text-xs text-slate-600">
-              目前綁定之儲存庫：<span className="font-mono font-bold text-slate-900">{resolvedRepo}</span>
-            </p>
-
-            <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
-              <button
-                type="button"
-                onClick={() => setIsUnbindRepoOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleUnbindRepository}
-                disabled={formSubmitting}
-                className="px-4 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-lg disabled:opacity-50"
-              >
-                {formSubmitting ? '解除中...' : '確認解除綁定'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 刪除遠端儲存庫 Modal (危險操作，需輸入全名二次確認) */}
-      {isDeleteRepoOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-red-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-red-100 pb-3">
-              <h3 className="text-lg font-bold text-red-600 flex items-center space-x-2">
-                <Trash2 className="w-5 h-5 text-red-600" />
-                <span>危險操作：刪除遠端儲存庫</span>
-              </h3>
-              <button onClick={() => setIsDeleteRepoOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-
-            {modalError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 flex items-start space-x-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.2" />
-                <span>{modalError}</span>
-              </div>
-            )}
-
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 space-y-1">
-              <div className="font-semibold">🚨 此操作無法復原！</div>
-              <p>
-                系統將呼叫 GitHub API 永久刪除儲存庫 <strong>{resolvedRepo}</strong> 及其所有分支、Commit 與檔案。
-              </p>
-              <p className="text-[11px] text-red-700 mt-1">
-                若 GitHub App 未被賦予 Administration: write 權限 (HTTP 403)，系統將誠實回報失敗並提供手動刪除指引，絕不會偽造成功。
-              </p>
-            </div>
-
-            <form onSubmit={handleDeleteRepository} className="space-y-4 text-sm">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  請輸入完整的儲存庫全名以確認刪除：
-                </label>
-                <div className="bg-slate-100 px-3 py-1.5 rounded font-mono text-xs text-slate-700 mb-2 select-all">
-                  {resolvedRepo}
-                </div>
-                <input
-                  type="text"
-                  placeholder="請在此處輸入上方完整名稱"
-                  value={deleteConfirmText}
-                  onChange={(e) => setDeleteConfirmText(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-red-500 font-mono text-xs"
-                  required
-                />
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setIsDeleteRepoOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={formSubmitting || deleteConfirmText.trim() !== resolvedRepo}
-                  className="px-4 py-2 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-40 cursor-pointer"
-                >
-                  {formSubmitting ? '刪除中...' : '確認永久刪除遠端儲存庫'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 撤銷 GitHub 協作者權限確認 Modal */}
-      {revokeConfirmMember && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
-                <ShieldAlert className="w-5 h-5 text-rose-600" />
-                <span>撤銷 GitHub 協作者權限</span>
-              </h3>
-              <button onClick={() => setRevokeConfirmMember(null)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-
-            <div className="space-y-3 text-xs text-slate-600">
-              <p>
-                確定要撤銷 <strong>@{revokeConfirmMember.username}</strong> (ID: {revokeConfirmMember.github_id}) 在儲存庫 <strong>{resolvedRepo}</strong> 的協作者權限嗎？
-              </p>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-blue-800 space-y-1">
-                <div className="font-semibold">🛡️ 多專案安全保留保護 (Safe Retention)</div>
-                <p>
-                  若該學生在其他進行中的實驗仍共用此儲存庫，系統將自動安全保留其權限，避免意外中斷其他專案之進行。
-                </p>
-                <p className="text-[11px] text-blue-700 mt-1">
-                  撤銷協作者權限<strong>絕不會</strong>刪除該學生的歷史 Commit、工作區檔案或活動紀錄。
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-slate-100 flex justify-end space-x-2">
-              <button
-                type="button"
-                onClick={() => setRevokeConfirmMember(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRevokeCollaborator(revokeConfirmMember)}
-                disabled={revokingMemberId === revokeConfirmMember.id}
-                className="px-4 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-lg disabled:opacity-50"
-              >
-                {revokingMemberId === revokeConfirmMember.id ? '撤銷中...' : '確認撤銷協作者權限'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

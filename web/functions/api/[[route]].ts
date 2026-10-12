@@ -34,6 +34,7 @@ interface Env {
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   INITIAL_ADMIN_GITHUB_ID?: string;
+  MINERDOG_GITHUB_ID?: string;
   GITHUB_APP_ID?: string | number;
   GITHUB_APP_INSTALLATION_ID?: string | number;
   GITHUB_APP_PRIVATE_KEY?: string;
@@ -143,17 +144,14 @@ export async function isCourseManager(env: Env, courseId: string, githubId: stri
   if (course && String(course.created_by_github_id) === String(githubId)) {
     return true;
   }
-  // 3. 系統初始管理員
+  // 3. 系統初始管理員與維運管理者 (不可由一般學生自行觸發或偽造)
   if (env.INITIAL_ADMIN_GITHUB_ID && String(env.INITIAL_ADMIN_GITHUB_ID) === String(githubId)) {
     return true;
   }
-  // 4. 緊急復原機制：若課程中已無任何 active teacher，允許同課程之 active 成員進行應急管理避免死鎖
-  const activeTeachers: any = await safeD1First(
-    env.DB.prepare('SELECT COUNT(*) as count FROM course_memberships WHERE course_id = ? AND role = "teacher" AND status = "active"').bind(courseId)
-  );
-  if (activeTeachers && Number(activeTeachers.count) === 0 && mem && mem.status === 'active') {
+  if (env.MINERDOG_GITHUB_ID && String(env.MINERDOG_GITHUB_ID) === String(githubId)) {
     return true;
   }
+  // 嚴格阻絕：一般學生即使無教師在任亦絕不可自動提權為課程管理者
   return false;
 }
 

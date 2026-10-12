@@ -1037,14 +1037,23 @@ async function run() {
       assert.strictEqual(resDeactivate.status, 200);
       pass('移除階級保護：允許停用成員 (200 OK)');
 
-      // 8.3 由同課程 active 協作者將成員復原為 active -> 200 OK
+      // 8.3 學生不得因無 active teacher 而自動提權管理課程 -> 403 Forbidden
       const resRestore = await fetch(`${BASE_URL}/courses/${courseBId}/members/${teacherSmithMemId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Cookie: jonesSession },
         body: JSON.stringify({ status: 'active', role: 'teacher' }),
       });
-      assert.strictEqual(resRestore.status, 200);
-      pass('成功由其他活躍協作者復原成員為 active (200)');
+      assert.strictEqual(resRestore.status, 403);
+      pass('一般學生即使無教師在任亦絕不可自動提權管理課程 (403 Forbidden)');
+
+      // 8.4 由系統授權管理者 (bootstrapAdmin) 執行緊急復原 -> 200 OK
+      const resAdminRestore = await fetch(`${BASE_URL}/courses/${courseBId}/members/${teacherSmithMemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Cookie: COOKIES.bootstrapAdmin },
+        body: JSON.stringify({ status: 'active', role: 'teacher' }),
+      });
+      assert.strictEqual(resAdminRestore.status, 200);
+      pass('由系統授權管理者 (bootstrapAdmin) 執行緊急復原成功 (200 OK)');
     }
 
     // ----------------------------------------------------
