@@ -85,7 +85,9 @@ lab-XX-name/
 * 一門課程可對應多筆實驗記錄，形成一對多關係
 ## 3. AI Agent Skill 協作規範
 
-本系統將 AI 協作規範正式封裝為可複用的 Agent Skill：[`.github/skills/experiment-report/SKILL.md`](.github/skills/experiment-report/SKILL.md)。
+本系統將 AI 協作規範正式封裝為雙 Agent Skill 架構：
+* [`.github/skills/github-workspace/SKILL.md`](.github/skills/github-workspace/SKILL.md)：負責直連 GitHub 儲存庫操作、目錄探索、安全檔案讀寫與素材上傳，支援 Course Mode 與 Experiment Mode。
+* [`.github/skills/experiment-report/SKILL.md`](.github/skills/experiment-report/SKILL.md)：負責實驗數據清洗、特性曲線擬合、圖表繪製規格與 Markdown 報告撰寫。
 
 ### 核心鐵律：
 1. **原始數據不可變性 (Sacred Raw Data)**：Agent 嚴禁修改、覆寫或刪除 `raw/` 內的原檔，所有處理成果一律寫入 `processed/`。

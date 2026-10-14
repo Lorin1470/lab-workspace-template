@@ -40,7 +40,7 @@
 * **方式 C（Git 本地推送）**：將檔案放入本地資料夾後執行 `git add .`、`git commit`、`git push`。
 
 ### 2. 如何使用 AI Agent 協助你？
-打開你的 AI 助手（如 Antigravity、Cursor、Claude Code 或 VS Code），Agent 會自動讀取本 Repo 中的 `.github/skills/experiment-report/SKILL.md`。
+打開你的 AI 助手（如 Antigravity、Cursor、Claude Code 或 VS Code），Agent 會自動讀取本 Repo 中的 Agent Skills（`.github/skills/github-workspace/SKILL.md` 與 `.github/skills/experiment-report/SKILL.md`）。
 
 你可以直接用白話對 Agent 說：
 * 💬 *「幫我把 photos/ 裡的照片按照實驗步驟分類」*

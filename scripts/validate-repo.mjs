@@ -7,6 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 const targetDir = process.argv[2] ? path.resolve(process.argv[2]) : path.resolve('template');
 
@@ -18,13 +19,15 @@ const requiredDirs = [
   'processed',
   'analysis',
   'report',
-  path.join('.github', 'skills', 'experiment-report')
+  path.join('.github', 'skills', 'experiment-report'),
+  path.join('.github', 'skills', 'github-workspace')
 ];
 
 const requiredFiles = [
   'config.yml',
   'README.md',
-  path.join('.github', 'skills', 'experiment-report', 'SKILL.md')
+  path.join('.github', 'skills', 'experiment-report', 'SKILL.md'),
+  path.join('.github', 'skills', 'github-workspace', 'SKILL.md')
 ];
 
 let hasError = false;
@@ -77,16 +80,80 @@ if (fs.existsSync(configPath)) {
   }
 }
 
-// 4. 檢查 SKILL.md
+// 4. 實質深度檢查 experiment-report/SKILL.md
 const skillPath = path.join(targetDir, '.github', 'skills', 'experiment-report', 'SKILL.md');
 if (fs.existsSync(skillPath)) {
   const skillContent = fs.readFileSync(skillPath, 'utf8');
   const versionMatch = skillContent.match(/version:\s*"([^"]+)"/);
-  if (!skillContent.includes('name: experiment-report') || !versionMatch) {
-    console.error('❌ SKILL.md 標頭缺少 name 或 version 規格');
+  const hasFrontmatter = skillContent.startsWith('---') && skillContent.includes('name: experiment-report') && skillContent.includes('description:');
+
+  if (!hasFrontmatter || !versionMatch) {
+    console.error('❌ experiment-report/SKILL.md Frontmatter 格式不合法或缺少關鍵欄位');
     hasError = true;
   } else {
-    console.log(`✅ SKILL.md 規範與版本宣告合格 (v${versionMatch[1]})`);
+    // 檢查實質安全核心規範關鍵字
+    const requiredSections = [
+      'raw/',
+      'Git 安全鎖',
+      'Commit Message 規範',
+      'report_mode'
+    ];
+    const missing = requiredSections.filter(sec => !skillContent.includes(sec));
+    if (missing.length > 0) {
+      console.error(`❌ experiment-report/SKILL.md 缺少必要安全章節或規範: ${missing.join(', ')}`);
+      hasError = true;
+    } else {
+      console.log(`✅ experiment-report/SKILL.md 實質規範與版本宣告合格 (v${versionMatch[1]})`);
+    }
+  }
+}
+
+// 5. 實質深度檢查 github-workspace/SKILL.md
+const wsSkillPath = path.join(targetDir, '.github', 'skills', 'github-workspace', 'SKILL.md');
+if (fs.existsSync(wsSkillPath)) {
+  const wsSkillContent = fs.readFileSync(wsSkillPath, 'utf8');
+  const wsVersionMatch = wsSkillContent.match(/version:\s*"([^"]+)"/);
+  const wsHasFrontmatter = wsSkillContent.startsWith('---') && wsSkillContent.includes('name: github-workspace') && wsSkillContent.includes('description:');
+
+  if (!wsHasFrontmatter || !wsVersionMatch) {
+    console.error('❌ github-workspace/SKILL.md Frontmatter 格式不合法或缺少關鍵欄位');
+    hasError = true;
+  } else {
+    // 檢查實質操作與安全核心規範關鍵字
+    const requiredWsSections = [
+      'Course Mode',
+      'Experiment Mode',
+      'Raw Data Sanctuary',
+      'report_mode: separate',
+      'report_mode: shared',
+      'Commit SHA',
+      'Git 安全鎖'
+    ];
+    const missing = requiredWsSections.filter(sec => !wsSkillContent.includes(sec));
+    if (missing.length > 0) {
+      console.error(`❌ github-workspace/SKILL.md 缺少必要架構或安全章節: ${missing.join(', ')}`);
+      hasError = true;
+    } else {
+      console.log(`✅ github-workspace/SKILL.md 實質規範與版本宣告合格 (v${wsVersionMatch[1]})`);
+    }
+  }
+}
+
+// 6. 母倉庫同步一致性檢查 (若在母倉庫內執行且 template 目錄存在)
+const rootSkillsDir = path.resolve('.github', 'skills');
+const templateSkillsDir = path.resolve('template', '.github', 'skills');
+if (fs.existsSync(rootSkillsDir) && fs.existsSync(templateSkillsDir)) {
+  const rootWsSkill = path.join(rootSkillsDir, 'github-workspace', 'SKILL.md');
+  const tmplWsSkill = path.join(templateSkillsDir, 'github-workspace', 'SKILL.md');
+  if (fs.existsSync(rootWsSkill) && fs.existsSync(tmplWsSkill)) {
+    const rootHash = crypto.createHash('sha256').update(fs.readFileSync(rootWsSkill)).digest('hex');
+    const tmplHash = crypto.createHash('sha256').update(fs.readFileSync(tmplWsSkill)).digest('hex');
+    if (rootHash !== tmplHash) {
+      console.error('❌ 母倉庫與 template 中的 github-workspace/SKILL.md 內容不一致 (雜湊不匹配)！請執行 npm run sync-skill');
+      hasError = true;
+    } else {
+      console.log('✅ 母倉庫與 template 之 Skill 雜湊完全一致 (Sync verified)');
+    }
   }
 }
 

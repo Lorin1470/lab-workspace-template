@@ -14,19 +14,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
 
-const SOURCE_SKILL_DIR = path.join(ROOT_DIR, '.github', 'skills', 'experiment-report');
-const TARGET_SKILL_DIR = path.join(ROOT_DIR, 'template', '.github', 'skills', 'experiment-report');
+const SOURCE_SKILLS_DIR = path.join(ROOT_DIR, '.github', 'skills');
+const TARGET_SKILLS_DIR = path.join(ROOT_DIR, 'template', '.github', 'skills');
 
 console.log('🔄 正在同步 Agent Skill 規範...');
-console.log(`   來源 (Source):  ${SOURCE_SKILL_DIR}`);
-console.log(`   目標 (Target):  ${TARGET_SKILL_DIR}`);
+console.log(`   來源 (Source):  ${SOURCE_SKILLS_DIR}`);
+console.log(`   目標 (Target):  ${TARGET_SKILLS_DIR}`);
 
-if (!fs.existsSync(SOURCE_SKILL_DIR)) {
-  console.error('❌ 錯誤：來源 Skill 目錄不存在！');
+if (!fs.existsSync(SOURCE_SKILLS_DIR)) {
+  console.error('❌ 錯誤：來源 Skills 目錄不存在！');
   process.exit(1);
 }
 
-copyRecursiveSync(SOURCE_SKILL_DIR, TARGET_SKILL_DIR);
+copyRecursiveSync(SOURCE_SKILLS_DIR, TARGET_SKILLS_DIR);
 console.log('✅ Agent Skill 同步完成！template/ 已更新為最新 Skill 規範。\n');
 
 function copyRecursiveSync(src, dest) {

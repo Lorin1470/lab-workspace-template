@@ -91,17 +91,36 @@ Template Version:
   所有已提交之實驗規範與範本檔案 (main 分支)
 ============================================================
 
-是否在 GitHub 建立遠端 Repo 並執行 Push？ [Yes / No] (預設 No): Yes
+是否在 GitHub 建立遠端 Repository？ [Yes / No] (預設 No): Yes
 可見度 [1] private (私有) / [2] public (公開) (預設 1): 1
 
 🚀 正在建立 GitHub Repository: your-org/electronics-lab-01 (--private)...
 🎉 遠端 Repository 建立完成！網址: https://github.com/your-org/electronics-lab-01
+
+==================== 遠端推送預覽確認 (Git Push) ====================
+【目標儲存庫】: your-org/electronics-lab-01
+【Remote】: origin
+【來源分支】: main
+【待推送 Commit SHA】: a1b2c3d...
+【Commit Message】: "[lab-01] 初始化實驗工作區 (Template v1.0)"
+【安全原則】: 建立遠端 Repo 不等同於獲准 Push；嚴禁未獲授權預設推向 main；必須明確指定來源與目標分支映射。
+===================================================================
+
+是否執行遠端 Git Push？ [Yes / No] (預設 No): Yes
+請輸入授權推送的目標分支 (來源分支為 main，請明確輸入目標分支名稱，不可空白): main
+⚠️ 目標分支為 [main]，請確認是否明確授權推向該分支？ [Yes / No] (預設 No): Yes
+
+🚀 正在推送至遠端: git push origin refs/heads/main:refs/heads/main...
+🎉 遠端 Push 完成！分支 refs/heads/main:refs/heads/main 已成功發布。
 ```
 
 > 📌 **若您選擇不在 CLI 中直接推送到遠端**，系統將輸出分步指引，供您日後獨立確認後手動執行：
-> - 步驟 a：`gh repo create <repo> --private`
+> - 步驟 a：`gh repo create <repo> --private`（僅建立遠端 Repo 不自動 push）
 > - 步驟 b：`git remote add origin https://github.com/<owner>/<repo>.git`
-> - 步驟 c：`git push -u origin main`
+> - 步驟 c：`git push origin refs/heads/<source_branch>:refs/heads/<target_branch>`（需明確指定來源與目標分支映射，推向 main 需明確專屬授權）
+
+> 🔒 **來源分支與 Commit 安全中斷與 TOCTOU 二次校驗機制**：
+> 在執行 Push 前，CLI 會自動檢驗本地目前的來源分支狀態（使用 `git branch --show-current` 與 `git check-ref-format --branch`）及待推送之 Commit SHA（使用 `git rev-parse HEAD` 與 `git rev-parse --show-object-format`）。若分支讀取失敗、結果為空字串、處於 detached HEAD、分支名稱不合法（如以 `+` 開頭或含非法字元），或無法明確確認儲存庫物件格式（僅支援明確之 `sha1` 與 `sha256`）及真實 Commit SHA，CLI 將嚴格遵循安全規範，**絕不預設回退至 main 或推向未確認分支，亦絕不自動切換分支、未知格式默認回退或在未確認 Commit 下推送**，而是直接安全中止 Push 流程。此外，在使用者確認授權推送後、實際發起 `git push` 前，CLI 會進行二次原子狀態校驗；若來源分支改變、分支分離或待推送 Commit SHA 發生漂移，立即中斷推送，杜絕 TOCTOU 時差風險。系統絕不嘗試推送，並提供明確的安全手動操作指引。
 
 ---
 
