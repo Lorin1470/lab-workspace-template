@@ -142,6 +142,8 @@ if (fs.existsSync(wsSkillPath)) {
 // 6. 母倉庫同步一致性檢查 (若在母倉庫內執行且 template 目錄存在)
 const rootSkillsDir = path.resolve('.github', 'skills');
 const templateSkillsDir = path.resolve('template', '.github', 'skills');
+const webWsSkill = path.resolve('web', 'public', 'skills', 'github-workspace', 'SKILL.md');
+
 if (fs.existsSync(rootSkillsDir) && fs.existsSync(templateSkillsDir)) {
   const rootWsSkill = path.join(rootSkillsDir, 'github-workspace', 'SKILL.md');
   const tmplWsSkill = path.join(templateSkillsDir, 'github-workspace', 'SKILL.md');
@@ -153,6 +155,17 @@ if (fs.existsSync(rootSkillsDir) && fs.existsSync(templateSkillsDir)) {
       hasError = true;
     } else {
       console.log('✅ 母倉庫與 template 之 Skill 雜湊完全一致 (Sync verified)');
+    }
+
+    // 驗證 web/public 靜態檔案一致性
+    if (fs.existsSync(webWsSkill)) {
+      const webHash = crypto.createHash('sha256').update(fs.readFileSync(webWsSkill)).digest('hex');
+      if (rootHash !== webHash) {
+        console.error('❌ 母倉庫與 web/public 中的 github-workspace/SKILL.md 內容不一致！請執行 npm run sync-skill');
+        hasError = true;
+      } else {
+        console.log('✅ 母倉庫與 web/public 之 Skill 雜湊完全一致 (Web sync verified)');
+      }
     }
   }
 }

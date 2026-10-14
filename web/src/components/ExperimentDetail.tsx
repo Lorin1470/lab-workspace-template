@@ -27,6 +27,8 @@ import {
 import JSZip from "jszip";
 import { WorkspaceManager, SimpleMarkdownViewer } from "./WorkspaceManager.tsx";
 import { getReportRelativePath } from "../utils/workspace-ui.ts";
+import { SkillDownloadGuide } from "./SkillDownloadGuide.tsx";
+
 
 interface ExperimentDetailProps {
   experiment: Experiment;
@@ -736,8 +738,12 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* AI Agent Skill (github-workspace) 下載與安裝引導 */}
+            <SkillDownloadGuide onError={onError} onSuccess={onSuccess} />
           </div>
         )}
+
 
         {/* 5. 實驗成員 (唯讀名單) */}
         {activeTab === "members" && (
