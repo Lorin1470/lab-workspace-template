@@ -3,14 +3,22 @@ import { Navbar } from './components/Navbar.tsx';
 import { CourseList } from './components/CourseList.tsx';
 import { CourseDetail } from './components/CourseDetail.tsx';
 import { ExperimentDetail } from './components/ExperimentDetail.tsx';
+import { SkillDownloadPage } from './components/SkillDownloadPage.tsx';
 import { Course, Experiment, AuthUser } from './types/index.ts';
 import { api, ApiError } from './api/client.ts';
 import { AlertCircle, CheckCircle2, X } from 'lucide-react';
 
-type ViewMode = 'courses' | 'course-detail' | 'experiment-detail';
+type ViewMode = 'courses' | 'course-detail' | 'experiment-detail' | 'skill-download';
+
+const getInitialView = (): ViewMode => {
+  if (typeof window !== 'undefined' && window.location.pathname === '/skill-download') {
+    return 'skill-download';
+  }
+  return 'courses';
+};
 
 export const App: React.FC = () => {
-  const [view, setView] = useState<ViewMode>('courses');
+  const [view, setView] = useState<ViewMode>(getInitialView);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [coursesLoading, setCoursesLoading] = useState<boolean>(true);
@@ -72,6 +80,44 @@ export const App: React.FC = () => {
     loadCourses();
   }, [checkAuth, loadCourses]);
 
+  // 路由導覽輔助（整合原生 History API）
+  const navigateTo = useCallback((newView: ViewMode, path: string = '/') => {
+    setView(newView);
+    if (typeof window !== 'undefined' && window.location.pathname !== path) {
+      window.history.pushState(null, '', path);
+    }
+  }, []);
+
+  // 監聽瀏覽器上一頁 / 下一頁 (popstate)
+  useEffect(() => {
+    const handlePopState = () => {
+      if (typeof window !== 'undefined') {
+        if (window.location.pathname === '/skill-download') {
+          setView('skill-download');
+        } else if (window.location.pathname === '/' || window.location.pathname === '') {
+          setView('courses');
+          setSelectedCourse(null);
+          setSelectedExperiment(null);
+        }
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const handleNavigateHome = useCallback(() => {
+    setSelectedCourse(null);
+    setSelectedExperiment(null);
+    navigateTo('courses', '/');
+    loadCourses();
+  }, [navigateTo, loadCourses]);
+
+  const handleNavigateSkillDownload = useCallback(() => {
+    setSelectedCourse(null);
+    setSelectedExperiment(null);
+    navigateTo('skill-download', '/skill-download');
+  }, [navigateTo]);
+
   // 登出
   const handleLogout = async () => {
     try {
@@ -81,10 +127,7 @@ export const App: React.FC = () => {
       // ignore
     } finally {
       setUser(null);
-      setSelectedCourse(null);
-      setSelectedExperiment(null);
-      setView('courses');
-      loadCourses();
+      handleNavigateHome();
     }
   };
 
@@ -145,17 +188,14 @@ export const App: React.FC = () => {
       <Navbar
         currentCourse={selectedCourse}
         currentExperiment={selectedExperiment}
-        onNavigateHome={() => {
-          setSelectedCourse(null);
-          setSelectedExperiment(null);
-          setView('courses');
-          loadCourses();
-        }}
+        currentView={view}
+        onNavigateHome={handleNavigateHome}
         onNavigateCourse={(c) => {
           setSelectedExperiment(null);
           setSelectedCourse(c);
           setView('course-detail');
         }}
+        onNavigateSkillDownload={handleNavigateSkillDownload}
         user={user}
         onLogout={handleLogout}
       />
@@ -198,6 +238,12 @@ export const App: React.FC = () => {
             loading={coursesLoading}
             onRefresh={loadCourses}
             onSelectCourse={handleSelectCourse}
+          />
+        )}
+
+        {view === 'skill-download' && (
+          <SkillDownloadPage
+            onBack={handleNavigateHome}
             onError={showError}
             onSuccess={showSuccess}
           />
@@ -207,12 +253,7 @@ export const App: React.FC = () => {
           <CourseDetail
             course={selectedCourse}
             user={user}
-            onBack={() => {
-              setSelectedCourse(null);
-              setSelectedExperiment(null);
-              setView('courses');
-              loadCourses();
-            }}
+            onBack={handleNavigateHome}
             onSelectExperiment={handleSelectExperiment}
             onCourseUpdated={handleCourseUpdated}
             onError={showError}
@@ -232,14 +273,12 @@ export const App: React.FC = () => {
                 setSelectedExperiment(null);
                 setView('course-detail');
               } else {
-                setSelectedCourse(null);
-                setSelectedExperiment(null);
-                setView('courses');
-                loadCourses();
+                handleNavigateHome();
               }
             }}
             onSelectExperiment={handleSelectExperiment}
             onExperimentUpdated={handleExperimentUpdated}
+            onNavigateSkillDownload={handleNavigateSkillDownload}
             onError={showError}
             onSuccess={showSuccess}
           />

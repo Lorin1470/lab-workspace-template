@@ -1,11 +1,13 @@
-import { FlaskConical, Github, LogOut, ChevronRight, FolderGit2 } from 'lucide-react';
+import { FlaskConical, Github, LogOut, ChevronRight, FolderGit2, Bot } from 'lucide-react';
 import { AuthUser, Course, Experiment } from '../types/index.ts';
 
 interface NavbarProps {
   currentCourse: Course | null;
   currentExperiment: Experiment | null;
+  currentView?: string;
   onNavigateHome: () => void;
   onNavigateCourse: (course: Course) => void;
+  onNavigateSkillDownload?: () => void;
   user: AuthUser | null;
   onLogout: () => void;
 }
@@ -16,8 +18,10 @@ export { resolveNavbarRepository };
 export const Navbar: React.FC<NavbarProps> = ({
   currentCourse,
   currentExperiment,
+  currentView,
   onNavigateHome,
   onNavigateCourse,
+  onNavigateSkillDownload,
   user,
   onLogout,
 }) => {
@@ -46,7 +50,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* 麵包屑 Breadcrumbs */}
-          {(currentCourse || currentExperiment) && (
+          {(currentCourse || currentExperiment) ? (
             <div className="flex items-center space-x-1.5 text-xs text-slate-400 pl-2 border-l border-slate-200 truncate">
               <button
                 onClick={onNavigateHome}
@@ -80,11 +84,39 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </>
               )}
             </div>
-          )}
+          ) : currentView === 'skill-download' ? (
+            <div className="flex items-center space-x-1.5 text-xs text-slate-400 pl-2 border-l border-slate-200 truncate">
+              <button
+                onClick={onNavigateHome}
+                className="hover:text-blue-600 font-medium text-slate-600 transition-colors cursor-pointer shrink-0"
+              >
+                課程列表
+              </button>
+              <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+              <span className="text-slate-900 font-bold truncate">
+                下載 Agent Skill
+              </span>
+            </div>
+          ) : null}
         </div>
 
         {/* 右側操作與身分資訊 */}
         <div className="flex items-center space-x-3 shrink-0">
+          {onNavigateSkillDownload && (
+            <button
+              onClick={onNavigateSkillDownload}
+              className={`inline-flex items-center space-x-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                currentView === 'skill-download'
+                  ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                  : 'text-slate-600 hover:text-purple-700 bg-slate-50 hover:bg-purple-50 border border-slate-200 hover:border-purple-200'
+              }`}
+              title="下載 github-workspace Agent Skill"
+            >
+              <Bot className="w-3.5 h-3.5 text-purple-600" />
+              <span className="hidden sm:inline">下載 Skill</span>
+            </button>
+          )}
+
           {displayRepo && (
             <span className="hidden md:inline-flex items-center space-x-1 text-xs font-mono bg-slate-100 px-2.5 py-1 rounded text-slate-600 border border-slate-200">
               <FolderGit2 className="w-3.5 h-3.5 text-slate-400" />

@@ -20,8 +20,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import JSZip from '../web/node_modules/jszip/lib/index.js';
 import {
-
   AGENT_INSTALL_PROMPT,
+  SKILL_REPO_URL,
+  SKILL_RAW_URL,
   downloadRawSkill,
   createSkillZip,
   downloadSkillZip,
@@ -260,78 +261,77 @@ try {
 }
 
 // ---------------------------------------------------------------
-// 測試組 4: Agent 安裝提示詞 7 大合規要求審查 (Prompt Verification)
+// 測試組 4: 精簡 Agent 安裝提示詞與官方來源審查 (Prompt Verification)
 // ---------------------------------------------------------------
-console.log('\n▶ [測試組 4: Agent 安裝提示詞 7 大合規要求審查]');
+console.log('\n▶ [測試組 4: 精簡 Agent 安裝提示詞與官方來源審查]');
 try {
   const p = AGENT_INSTALL_PROMPT;
 
-  assert(typeof p === 'string' && p.length > 200, '提示詞必須存在且長度充足');
+  assert(typeof p === 'string' && p.length > 100, '提示詞必須存在且長度充足');
   pass('13. 提示詞為非空字串且長度充足');
 
-  // a. 先辨識目前使用的 Agent 與其支援的 Skill 安裝格式
+  // 官方來源包含 GitHub 儲存庫與原始 SKILL.md 網址
   assert(
-    p.includes('辨識你目前運行的 AI Agent 類型') &&
-    (p.includes('Antigravity') || p.includes('Codex')),
-    '提示詞必須要求先辨識 Agent 類型與支援格式'
+    p.includes(SKILL_REPO_URL) && p.includes('https://github.com/Lorin1470/lab-workspace-template'),
+    '提示詞必須包含 GitHub 儲存庫官方網址'
   );
-  pass('14. 要求 a: 先辨識目前使用的 Agent 類型與支援安裝格式 (通過)');
-
-  // b. 閱讀下載的 Skill，確認內容與檔案完整性
   assert(
-    p.includes('閱讀該 Skill 檔案') &&
+    p.includes(SKILL_RAW_URL) && p.includes('.github/skills/github-workspace/SKILL.md'),
+    '提示詞必須包含原始 SKILL.md 官方網址'
+  );
+  pass('14. 提示詞正確包含 GitHub 儲存庫與原始 SKILL.md 官方來源網址');
+
+  // 1. 從官方來源取得，若無法下載明確告知，不可假裝
+  assert(
+    p.includes('官方來源') &&
+    p.includes('無法下載') &&
+    p.includes('不可假裝取得檔案'),
+    '提示詞必須要求從官方來源取得，若失敗明確告知使用者，不可假裝取得'
+  );
+  pass('15. 要求 1: 從官方來源取得，若無法下載明確告知，不可假裝取得檔案 (通過)');
+
+  // 2. 確認 SKILL.md 完整、YAML Frontmatter 正確
+  assert(
+    p.includes('SKILL.md') &&
     p.includes('YAML Frontmatter') &&
-    p.includes('完整性'),
-    '提示詞必須要求閱讀 Skill 並確認完整性'
+    p.includes('格式'),
+    '提示詞必須要求確認 SKILL.md 完整性與 YAML Frontmatter'
   );
-  pass('15. 要求 b: 先閱讀下載的 Skill 並驗證 YAML Frontmatter 與內容完整性 (通過)');
+  pass('16. 要求 2: 確認 SKILL.md 完整、YAML Frontmatter 正確，並符合支援格式 (通過)');
 
-  // c. 依該 Agent 的官方規範選擇正確的使用者層級或專案層級安裝位置，不可假設所有 Agent 都使用同一路徑
+  // 3. 依官方規範選擇使用者層級或專案層級安裝位置，不可猜測路徑
   assert(
     p.includes('官方規範') &&
     p.includes('使用者層級') &&
     p.includes('專案層級') &&
-    p.includes('不可假設所有 Agent 都使用同一路徑'),
-    '提示詞必須要求依規範選擇使用者或專案層級路徑，不可假設所有 Agent 使用同一路徑'
+    p.includes('不可猜測路徑'),
+    '提示詞必須要求依官方規範選擇安裝位置，不可猜測路徑'
   );
-  pass('16. 要求 c: 依 Agent 官方規範區分使用者層級/專案層級，不可假設單一路徑 (通過)');
+  pass('17. 要求 3: 依目前 Agent 官方規範選擇安裝位置，不可猜測路徑 (通過)');
 
-  // d. 若沒有提供檔案路徑，先詢問使用者檔案位置，或在可用的工作區中尋找，不可假裝已取得檔案
+  // 4. 如果已有同名 Skill，先比較內容，不可未經確認就覆蓋
   assert(
-    p.includes('尚未在對話中提供下載的 Skill 檔案路徑') &&
-    p.includes('可用的工作區目錄中搜尋') &&
-    p.includes('詢問我') &&
-    p.includes('絕對嚴禁假裝已經取得檔案'),
-    '提示詞必須要求未獲路徑時先搜尋或詢問，嚴禁假裝取得'
+    p.includes('同名 Skill') &&
+    p.includes('先比較內容') &&
+    p.includes('不可未經確認就覆蓋'),
+    '提示詞必須要求防覆寫比對與確認'
   );
-  pass('17. 要求 d: 未提供路徑時先尋找或主動詢問使用者，絕對嚴禁假裝取得檔案 (通過)');
+  pass('18. 要求 4: 如果已有同名 Skill，先比較內容，不可未經確認就覆蓋 (通過)');
 
-  // e. 如果目的地已有同名 Skill，先比較內容並詢問使用者，不可直接覆蓋
+  // 5. 安裝後驗證實際檔案、路徑與內容完整性，並回報結果及必要的重新載入步驟
   assert(
-    p.includes('已有同名的 Skill') &&
-    p.includes('比對兩者的內容') &&
-    p.includes('不可直接強制覆蓋'),
-    '提示詞必須要求防覆寫比對並取得確認'
+    p.includes('驗證實際檔案') &&
+    p.includes('路徑') &&
+    p.includes('內容完整性') &&
+    p.includes('重新載入步驟'),
+    '提示詞必須要求安裝後驗證實際檔案、路徑與內容完整性，並回報結果與重新載入步驟'
   );
-  pass('18. 要求 e: 目的地若有同名 Skill 先比對內容與版本差異並徵詢確認，不可直接覆蓋 (通過)');
+  pass('19. 要求 5: 安裝後驗證實際檔案、路徑與內容完整性，並回報結果與重新載入步驟 (通過)');
 
-  // f. 安裝後驗證目錄結構、必要檔案與內容完整性；能驗證 Agent 識別狀態時，也要驗證
-  assert(
-    p.includes('驗證安裝目錄結構') &&
-    p.includes('必要檔案') &&
-    p.includes('Agent 的 Skill 識別狀態'),
-    '提示詞必須要求安裝後驗證結構、必要檔案與 Agent 識別狀態'
-  );
-  pass('19. 要求 f: 安裝後驗證目錄結構、必要檔案 (SKILL.md) 與 Agent 識別狀態 (通過)');
-
-  // g. 回報實際安裝路徑、驗證結果與需要使用者手動完成的步驟
-  assert(
-    p.includes('實際安裝路徑') &&
-    p.includes('完整性驗證結果') &&
-    p.includes('手動'),
-    '提示詞必須要求回報實際安裝路徑、驗證結果與手動步驟'
-  );
-  pass('20. 要求 g: 回報實際安裝路徑、驗證結果與使用者手動步驟 (通過)');
+  // 提示詞精簡性審查：行數適中，不冗長重複
+  const lineCount = p.split('\n').length;
+  assert(lineCount <= 25, `精簡提示詞行數應小於等於 25 行 (實際 ${lineCount} 行)`);
+  pass('20. 提示詞維持短小精悍且直接可執行，無冗長贅述');
 } catch (err) {
   fail('測試組 4 執行失敗', err);
 }
@@ -401,10 +401,18 @@ try {
 
 
 // ---------------------------------------------------------------
-// 測試組 6: 前端頁面元件靜態審查 (UI Integrity & Safety Checks)
+// 測試組 6: 前端獨立頁面與集中式架構審查 (UI Integrity & Architecture)
 // ---------------------------------------------------------------
-console.log('\n▶ [測試組 6: 前端介面文案與兩步驟引導審查]');
+console.log('\n▶ [測試組 6: 前端獨立頁面、首頁入口與架構審查]');
 try {
+  // 1. 獨立頁面 SkillDownloadPage.tsx 存在且正確封裝
+  const pagePath = path.join(ROOT_DIR, 'web', 'src', 'components', 'SkillDownloadPage.tsx');
+  assert(fs.existsSync(pagePath), 'SkillDownloadPage.tsx 必須存在');
+  const pageContent = fs.readFileSync(pagePath, 'utf8');
+  assert(pageContent.includes('<SkillDownloadGuide'), '獨立頁面必須引用集中式 SkillDownloadGuide');
+  assert(pageContent.includes('返回課程列表'), '獨立頁面必須具備返回課程列表功能');
+  pass('24. 建立獨立下載頁 (SkillDownloadPage.tsx)，提供集中下載與返回導航');
+
   const guidePath = path.join(ROOT_DIR, 'web', 'src', 'components', 'SkillDownloadGuide.tsx');
   assert(fs.existsSync(guidePath), 'SkillDownloadGuide.tsx 必須存在');
   const guideContent = fs.readFileSync(guidePath, 'utf8');
@@ -412,47 +420,72 @@ try {
   // 兩步驟明確劃分
   assert(guideContent.includes('步驟一：下載 Skill 檔案'), '必須清楚包含步驟一標題');
   assert(guideContent.includes('步驟二：一鍵複製安裝提示詞') || guideContent.includes('步驟二：複製'), '必須清楚包含步驟二標題');
-  pass('24. SkillDownloadGuide 明確劃分「步驟一：下載」與「步驟二：安裝」兩個不同階段');
+  pass('25. SkillDownloadGuide 明確劃分「步驟一：下載」與「步驟二：安裝」兩個不同階段');
 
   // 非直裝聲明 (網站不假裝已安裝至本機)
   assert(
     guideContent.includes('網站僅提供') || guideContent.includes('不會亦無法直接安裝'),
     '必須聲明網站只負責提供檔案與提示詞，無本機直裝功能'
   );
-  pass('25. 介面明確標註網站僅提供檔案與提示詞，絕不假稱已直接安裝到電腦');
+  pass('26. 介面明確標註網站僅提供檔案與提示詞，絕不假稱已直接安裝到電腦');
 
   // 必須包含「下載 SKILL.md」、「下載 ZIP」與「複製 Agent 安裝提示詞」等操作按鈕
   assert(guideContent.includes('下載 SKILL.md'), '必須具備下載 SKILL.md 按鈕');
   assert(guideContent.includes('下載 ZIP'), '必須具備下載 ZIP 按鈕');
   assert(guideContent.includes('複製 Agent 安裝提示詞'), '必須具備複製 Agent 安裝提示詞按鈕');
-  pass('26. 包含原始 SKILL.md 下載、ZIP 下載及提示詞一鍵複製全部必要功能按鈕');
+  pass('27. 包含原始 SKILL.md 下載、ZIP 下載及提示詞一鍵複製全部必要功能按鈕');
 
-  // 檢查 CourseList.tsx 與 ExperimentDetail.tsx 的整合
+  // 檢查頂部導覽列 Navbar.tsx 保留唯一的全站「下載 Skill」入口，CourseList 不再重複
+  const navbarContent = fs.readFileSync(
+    path.join(ROOT_DIR, 'web', 'src', 'components', 'Navbar.tsx'),
+    'utf8'
+  );
+  assert(
+    navbarContent.includes('下載 Skill') && navbarContent.includes('onNavigateSkillDownload'),
+    'Navbar 頂部導覽列必須保留全站唯一的「下載 Skill」入口按鈕'
+  );
+
   const courseListContent = fs.readFileSync(
     path.join(ROOT_DIR, 'web', 'src', 'components', 'CourseList.tsx'),
     'utf8'
   );
   assert(
-    courseListContent.includes('<SkillDownloadGuide') || courseListContent.includes('SkillDownloadGuide'),
-    'CourseList 必須整合 SkillDownloadGuide'
+    !courseListContent.includes('下載 Skill') && !courseListContent.includes('<SkillDownloadGuide'),
+    'CourseList 首頁不得再保留重複的下載按鈕或下載說明區塊'
   );
-  pass('27. 課程列表 (CourseList) 正確整合 SkillDownloadGuide 引導區塊');
+  pass('28. 頂部導覽列 (Navbar) 保留唯一「下載 Skill」入口，首頁列表 (CourseList) 無重複按鈕或說明區塊');
 
+  // 檢查 ExperimentDetail.tsx 的整合：移除重複區塊，具備前往下載頁入口
   const expDetailContent = fs.readFileSync(
     path.join(ROOT_DIR, 'web', 'src', 'components', 'ExperimentDetail.tsx'),
     'utf8'
   );
   assert(
-    expDetailContent.includes('<SkillDownloadGuide') || expDetailContent.includes('SkillDownloadGuide'),
-    'ExperimentDetail 的 download tab 必須整合 SkillDownloadGuide'
+    !expDetailContent.includes('<SkillDownloadGuide'),
+    'ExperimentDetail 不得重複渲染整個 SkillDownloadGuide 區塊'
   );
-  pass('28. 實驗詳情 (ExperimentDetail) 的「打包下載」分頁正確整合 SkillDownloadGuide');
+  assert(
+    expDetailContent.includes('前往 Skill 下載頁') || expDetailContent.includes('onNavigateSkillDownload'),
+    'ExperimentDetail 打包下載分頁具備前往下載頁入口'
+  );
+  pass('29. 實驗詳情 (ExperimentDetail) 移除重複區塊，維持單一入口導向獨立下載頁');
+
+  // 檢查 App.tsx 路由支援 /skill-download
+  const appContent = fs.readFileSync(
+    path.join(ROOT_DIR, 'web', 'src', 'App.tsx'),
+    'utf8'
+  );
+  assert(
+    appContent.includes('/skill-download') && appContent.includes('popstate'),
+    'App.tsx 必須具備 /skill-download SPA 路由與瀏覽器歷史紀錄同步'
+  );
+  pass('30. SPA 路由支援 /skill-download 直達與瀏覽器歷史紀錄同步');
 
   // 確保沒有違反既有測試規定的黑名單關鍵字
   assert(!expDetailContent.includes('本地 Git'), 'ExperimentDetail 絕不得出現「本地 Git」');
   assert(!expDetailContent.includes('提交至儲存庫'), 'ExperimentDetail 絕不得出現「提交至儲存庫」');
   assert(!expDetailContent.includes('(experiments/${'), 'ExperimentDetail 絕不得外洩 scoped path');
-  pass('29. 嚴格通過既有黑名單審查，絕無引入「本地 Git」、「提交至儲存庫」或 scoped path 外洩');
+  pass('31. 嚴格通過既有黑名單審查，絕無引入「本地 Git」、「提交至儲存庫」或 scoped path 外洩');
 } catch (err) {
   fail('測試組 6 執行失敗', err);
 }

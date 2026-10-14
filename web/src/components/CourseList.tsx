@@ -11,7 +11,6 @@ import {
   Lock,
   RefreshCw,
 } from 'lucide-react';
-import { SkillDownloadGuide } from './SkillDownloadGuide.tsx';
 
 interface CourseListProps {
   courses: Course[];
@@ -19,8 +18,6 @@ interface CourseListProps {
   loading: boolean;
   onRefresh: () => void;
   onSelectCourse: (course: Course) => void;
-  onError?: (msg: string) => void;
-  onSuccess: (msg: string) => void;
 }
 
 export const CourseList: React.FC<CourseListProps> = ({
@@ -29,8 +26,6 @@ export const CourseList: React.FC<CourseListProps> = ({
   loading,
   onRefresh,
   onSelectCourse,
-  onError,
-  onSuccess,
 }) => {
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -238,8 +233,6 @@ export const CourseList: React.FC<CourseListProps> = ({
           </p>
         </div>
       )}
-      {/* Agent Skill 下載與安裝引導 */}
-      <SkillDownloadGuide onError={onError} onSuccess={onSuccess} />
     </div>
   );
 };

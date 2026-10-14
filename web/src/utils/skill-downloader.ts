@@ -11,28 +11,22 @@
 
 import JSZip from 'jszip';
 
-export const AGENT_INSTALL_PROMPT = `請協助我安裝「github-workspace」Agent Skill。請嚴格遵循以下步驟與規範執行，不可跳過任何步驟或假裝成功：
+export const SKILL_REPO_URL = 'https://github.com/Lorin1470/lab-workspace-template';
+export const SKILL_RAW_URL =
+  'https://raw.githubusercontent.com/Lorin1470/lab-workspace-template/main/.github/skills/github-workspace/SKILL.md';
 
-1. 【辨識 Agent 類型與 Skill 格式】
-   請先主動辨識你目前運行的 AI Agent 類型（例如 Antigravity、OpenAI Codex、Claude Code、Cursor 等），以及該 Agent 官方支援的 Agent Skill / 擴充工具格式與安裝規範。
+export const AGENT_INSTALL_PROMPT = `請協助安裝 \`github-workspace\` Agent Skill。
 
-2. 【定位下載檔案】
-   若我尚未在對話中提供下載的 Skill 檔案路徑（例如 SKILL.md 或解壓縮後的 github-workspace 目錄），請先在目前可用的工作區目錄中搜尋；若找不到，請先詢問我檔案放置的本機路徑。絕對嚴禁假裝已經取得檔案或憑空編造內容。
+【官方來源】
+- GitHub 儲存庫：${SKILL_REPO_URL}
+- 原始 Skill：${SKILL_RAW_URL}
 
-3. 【閱讀並驗證內容完整性】
-   在進行任何安裝動作前，請先完整閱讀該 Skill 檔案，核對 YAML Frontmatter（包含 name: github-workspace、version 等欄位）與核心操作規範，確認內容完整且檔案未受損。
-
-4. 【選擇正確安裝位置】
-   依據該 Agent 的官方規範選擇正確的使用者層級（User-level / Global）或專案層級（Project-level / Workspace）安裝位置，不可假設所有 Agent 都使用同一路徑。
-
-5. 【防覆寫比對與確認】
-   若目的地已有同名的 Skill（例如既有的 github-workspace），請先比對兩者的內容與版本差異並向我說明，詢問我的確認，絕對不可直接強制覆蓋。
-
-6. 【驗證安裝結構與狀態】
-   安裝完成後，請實質驗證安裝目錄結構、必要檔案（必須包含 SKILL.md）與內容完整性。若目前環境支援檢測 Agent 的 Skill 識別狀態（例如查看可用 Skill 清單），請一併進行驗證。
-
-7. 【回報結果與手動步驟】
-   請詳細回報實際安裝路徑、完整性驗證結果，以及是否需要我手動重啟 Agent 或重新載入等步驟。`;
+【執行要求】
+1. 從上述官方來源取得 \`github-workspace\` Skill；如果無法下載，明確告知使用者，不可假裝取得檔案。
+2. 確認 \`SKILL.md\` 完整、YAML Frontmatter 正確，並符合目前 Agent 支援的 Skill 格式。
+3. 依目前 Agent 的官方規範選擇使用者層級或專案層級安裝位置，不可猜測路徑。
+4. 如果已有同名 Skill，先比較內容，不可未經確認就覆蓋。
+5. 安裝後驗證實際檔案、路徑與內容完整性，並回報結果及必要的重新載入步驟。`;
 
 export interface DownloadResult {
   filename: string;

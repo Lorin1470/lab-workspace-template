@@ -9,10 +9,14 @@ import {
   FileCode,
   FolderArchive,
   Bot,
+  ExternalLink,
+  Github,
 } from 'lucide-react';
 
 import {
   AGENT_INSTALL_PROMPT,
+  SKILL_REPO_URL,
+  SKILL_RAW_URL,
   downloadRawSkill,
   downloadSkillZip,
   copyInstallPrompt,
@@ -116,6 +120,40 @@ export const SkillDownloadGuide: React.FC<SkillDownloadGuideProps> = ({
           <p className="text-xs text-slate-500 mt-1 leading-relaxed">
             供 Antigravity、OpenAI Codex、Claude Code、Cursor 等各大支援 Agent Skill 的 AI 助理使用。直連 GitHub 安全操作工作區與報告。
           </p>
+        </div>
+      </div>
+
+      {/* 官方來源資訊 */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs space-y-2">
+        <div className="font-bold text-slate-800 flex items-center space-x-1.5">
+          <Github className="w-4 h-4 text-slate-700" />
+          <span>官方來源</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-600">
+          <div className="flex items-center space-x-1.5 truncate">
+            <span className="text-slate-400 shrink-0">GitHub 儲存庫：</span>
+            <a
+              href={SKILL_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 underline truncate inline-flex items-center space-x-1 font-mono"
+            >
+              <span className="truncate">{SKILL_REPO_URL}</span>
+              <ExternalLink className="w-3 h-3 shrink-0" />
+            </a>
+          </div>
+          <div className="flex items-center space-x-1.5 truncate">
+            <span className="text-slate-400 shrink-0">原始 Skill：</span>
+            <a
+              href={SKILL_RAW_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 underline truncate inline-flex items-center space-x-1 font-mono"
+            >
+              <span className="truncate">GitHub Raw SKILL.md</span>
+              <ExternalLink className="w-3 h-3 shrink-0" />
+            </a>
+          </div>
         </div>
       </div>
 
@@ -241,7 +279,7 @@ export const SkillDownloadGuide: React.FC<SkillDownloadGuideProps> = ({
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed">
-              下載檔案後，複製下方安裝提示詞直接傳送給您的 AI Agent。提示詞要求 Agent 先辨識自身規範路徑、比對防覆寫、完整性校驗與安裝後結構回報：
+              下載檔案後，複製下方精簡安裝提示詞直接傳送給您的 AI Agent。提示詞已內含 GitHub 官方來源、規範路徑選擇、防覆寫比對與安裝後驗證要求：
             </p>
 
             {/* 複製狀態明確回饋 */}

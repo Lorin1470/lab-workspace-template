@@ -23,12 +23,11 @@ import {
   Printer,
   ChevronDown,
   CheckCircle2,
+  Bot,
 } from "lucide-react";
 import JSZip from "jszip";
 import { WorkspaceManager, SimpleMarkdownViewer } from "./WorkspaceManager.tsx";
 import { getReportRelativePath } from "../utils/workspace-ui.ts";
-import { SkillDownloadGuide } from "./SkillDownloadGuide.tsx";
-
 
 interface ExperimentDetailProps {
   experiment: Experiment;
@@ -39,6 +38,7 @@ interface ExperimentDetailProps {
   onBack: () => void;
   onSelectExperiment?: (exp: Experiment, initialTab?: TabType) => void;
   onExperimentUpdated: (updated: Experiment) => void;
+  onNavigateSkillDownload?: () => void;
   onError: (msg: string) => void;
   onSuccess: (msg: string) => void;
 }
@@ -81,6 +81,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   initialTab = "files",
   onBack,
   onSelectExperiment,
+  onNavigateSkillDownload,
   onError,
   onSuccess,
 }) => {
@@ -737,10 +738,26 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   <span>下載完整 ZIP</span>
                 </button>
               </div>
-            </div>
 
-            {/* AI Agent Skill (github-workspace) 下載與安裝引導 */}
-            <SkillDownloadGuide onError={onError} onSuccess={onSuccess} />
+              <div className="bg-white p-5 rounded-xl border border-slate-200 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center space-x-1.5 text-purple-600 mb-1">
+                    <Bot className="w-4 h-4" />
+                    <span className="text-xs font-bold uppercase tracking-wider">AI Agent Skill</span>
+                  </div>
+                  <h4 className="font-semibold text-slate-800 text-sm">github-workspace Skill</h4>
+                  <p className="text-xs text-slate-400 mt-1">取得標準 Agent Skill 檔案、ZIP 壓縮包與精簡安裝提示詞</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onNavigateSkillDownload}
+                  className="mt-4 w-full bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <Bot className="w-3.5 h-3.5 text-purple-600" />
+                  <span>前往 Skill 下載頁</span>
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
