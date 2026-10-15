@@ -5,6 +5,20 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='2'><path d='M10 2v7.31L4.85 19.34A2 2 0 0 0 6.64 22h10.72a2 2 0 0 0 1.79-2.66L14 9.31V2'/><line x1='8' y1='2' x2='16' y2='2'/></svg>" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>實驗課 GitHub 工作區系統</title>
+    <!-- 防止深色模式載入時閃白 (Anti-FOUC) -->
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('theme');
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (saved === 'dark' || (!saved && prefersDark)) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <!-- MathJax for rendering LaTeX formulas inline -->
     <script>
       window.MathJax = {
@@ -19,7 +33,7 @@
     </script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   </head>
-  <body class="bg-slate-50 text-slate-900 min-h-screen">
+  <body class="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 min-h-screen transition-colors duration-150">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

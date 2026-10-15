@@ -11,7 +11,8 @@
     "test": "node scripts/verify-workspace.mjs && node scripts/verify-workspace-api.mjs && node scripts/verify-github-workspace.mjs",
     "test:github-workspace": "node scripts/verify-github-workspace.mjs",
     "test:skill-download": "node scripts/verify-skill-download.mjs",
-    "test:all": "node scripts/verify-workspace.mjs && node scripts/verify-workspace-api.mjs && node scripts/verify-github-workspace.mjs && node scripts/verify-permissions.mjs && node scripts/verify-auth-session.mjs && node scripts/verify-management.mjs && node scripts/verify-course-mode.mjs && node scripts/verify-frontend.mjs && node scripts/verify-collaborator-sync.mjs && node scripts/verify-skill-download.mjs",
+    "test:dark-mode": "node scripts/verify-dark-mode.mjs",
+    "test:all": "node scripts/verify-workspace.mjs && node scripts/verify-workspace-api.mjs && node scripts/verify-github-workspace.mjs && node scripts/verify-permissions.mjs && node scripts/verify-auth-session.mjs && node scripts/verify-management.mjs && node scripts/verify-course-mode.mjs && node scripts/verify-frontend.mjs && node scripts/verify-collaborator-sync.mjs && node scripts/verify-skill-download.mjs && node scripts/verify-dark-mode.mjs",
     "test:collaborator-sync": "node scripts/verify-collaborator-sync.mjs",
 
     "test:activity": "node scripts/verify-activity-log.mjs",

@@ -170,48 +170,48 @@ export const SimpleMarkdownViewer: React.FC<{ content: string }> = ({ content })
       // 標題
       if (line.startsWith('# ')) {
         elements.push(
-          <h1 key={i} className="text-xl font-bold text-slate-900 border-b border-slate-200 pb-1.5 mt-4 mb-2">
+          <h1 key={i} className="text-xl font-bold text-slate-900 dark:text-white border-b border-slate-200 dark:border-slate-700 pb-1.5 mt-4 mb-2">
             {line.slice(2)}
           </h1>
         );
       } else if (line.startsWith('## ')) {
         elements.push(
-          <h2 key={i} className="text-lg font-bold text-slate-800 border-b border-slate-100 pb-1 mt-3 mb-2">
+          <h2 key={i} className="text-lg font-bold text-slate-800 dark:text-slate-100 border-b border-slate-100 dark:border-slate-700 pb-1 mt-3 mb-2">
             {line.slice(3)}
           </h2>
         );
       } else if (line.startsWith('### ')) {
         elements.push(
-          <h3 key={i} className="text-base font-semibold text-slate-800 mt-2 mb-1">
+          <h3 key={i} className="text-base font-semibold text-slate-800 dark:text-slate-100 mt-2 mb-1">
             {line.slice(4)}
           </h3>
         );
       } else if (line.startsWith('> ')) {
         elements.push(
-          <blockquote key={i} className="border-l-4 border-blue-500 pl-3 py-1 bg-blue-50/50 text-slate-700 text-xs my-2 italic rounded-r">
+          <blockquote key={i} className="border-l-4 border-blue-500 pl-3 py-1 bg-blue-50/50 dark:bg-blue-950/40 text-slate-700 dark:text-slate-300 text-xs my-2 italic rounded-r">
             {line.slice(2)}
           </blockquote>
         );
       } else if (line.startsWith('- ') || line.startsWith('* ')) {
         elements.push(
-          <li key={i} className="ml-4 list-disc text-xs text-slate-700 my-0.5">
+          <li key={i} className="ml-4 list-disc text-xs text-slate-700 dark:text-slate-300 my-0.5">
             {line.slice(2)}
           </li>
         );
       } else if (/^\d+\.\s/.test(line)) {
         const itemText = line.replace(/^\d+\.\s/, '');
         elements.push(
-          <li key={i} className="ml-4 list-decimal text-xs text-slate-700 my-0.5">
+          <li key={i} className="ml-4 list-decimal text-xs text-slate-700 dark:text-slate-300 my-0.5">
             {itemText}
           </li>
         );
       } else if (line.trim() === '---' || line.trim() === '***') {
-        elements.push(<hr key={i} className="my-3 border-slate-200" />);
+        elements.push(<hr key={i} className="my-3 border-slate-200 dark:border-slate-700" />);
       } else if (line.trim() === '') {
         elements.push(<div key={i} className="h-2" />);
       } else {
         elements.push(
-          <p key={i} className="text-xs text-slate-700 leading-relaxed my-1">
+          <p key={i} className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed my-1">
             {line}
           </p>
         );
@@ -222,7 +222,7 @@ export const SimpleMarkdownViewer: React.FC<{ content: string }> = ({ content })
       elements.push(
         <pre
           key={`code-end`}
-          className="bg-slate-900 text-slate-100 p-3 rounded-lg overflow-x-auto text-xs font-mono my-2"
+          className="bg-slate-900 dark:bg-slate-950 text-slate-100 p-3 rounded-lg overflow-x-auto text-xs font-mono my-2 border border-slate-800"
         >
           <code>{codeBlockLines.join('\n')}</code>
         </pre>
@@ -670,17 +670,17 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
           style={{ paddingLeft: `${depth * 14 + 10}px` }}
           className={`group flex items-center justify-between py-1.5 pr-2.5 rounded-lg cursor-pointer transition-colors ${
             isSelected
-              ? 'bg-blue-100/80 text-blue-900 font-semibold border-l-3 border-blue-600'
-              : 'hover:bg-slate-100 text-slate-700'
+              ? 'bg-blue-100/80 dark:bg-blue-950/80 text-blue-900 dark:text-blue-200 font-semibold border-l-3 border-blue-600 dark:border-blue-500'
+              : 'hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-300'
           }`}
         >
           <div className="flex items-center space-x-2 truncate">
             {isDir ? (
-              <span className="text-slate-400 group-hover:text-slate-600 flex items-center">
+              <span className="text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300 flex items-center">
                 {isExpanded ? (
-                  <ChevronDown className="w-3.5 h-3.5 mr-0.5 text-slate-500" />
+                  <ChevronDown className="w-3.5 h-3.5 mr-0.5 text-slate-500 dark:text-slate-400" />
                 ) : (
-                  <ChevronRight className="w-3.5 h-3.5 mr-0.5 text-slate-500" />
+                  <ChevronRight className="w-3.5 h-3.5 mr-0.5 text-slate-500 dark:text-slate-400" />
                 )}
                 {isExpanded ? (
                   <FolderOpen className="w-4 h-4 text-amber-500 shrink-0" />
@@ -693,13 +693,13 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
             ) : isMarkdownPath(item.path) ? (
               <FileText className="w-4 h-4 text-blue-500 shrink-0" />
             ) : (
-              <FileCode className="w-4 h-4 text-slate-400 shrink-0" />
+              <FileCode className="w-4 h-4 text-slate-400 dark:text-slate-500 shrink-0" />
             )}
 
             <span className="truncate font-mono">{item.name}</span>
 
             {isRawDir && isDir && (
-              <span className="inline-flex items-center space-x-0.5 px-1 py-0.2 rounded text-[10px] bg-amber-50 text-amber-700 border border-amber-200">
+              <span className="inline-flex items-center space-x-0.5 px-1 py-0.2 rounded text-[10px] bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                 <Lock className="w-2.5 h-2.5" />
                 <span>唯讀</span>
               </span>
@@ -709,7 +709,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
           <div className="flex items-center space-x-1.5 shrink-0 ml-2">
             {isLoading && <RefreshCw className="w-3 h-3 animate-spin text-blue-500" />}
             {item.size !== undefined && !isDir && (
-              <span className="text-[10px] text-slate-400 font-mono">
+              <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
                 {formatFileSize(item.size)}
               </span>
             )}
@@ -725,7 +725,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
               ) : (
                 <div
                   style={{ paddingLeft: `${(depth + 1) * 14 + 10}px` }}
-                  className="py-1 text-[11px] text-slate-400 italic"
+                  className="py-1 text-[11px] text-slate-400 dark:text-slate-500 italic"
                 >
                   (目錄為空)
                 </div>
@@ -740,24 +740,24 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
   return (
     <div className="space-y-4">
       {/* 頂部操作與提示橫幅 */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs transition-colors">
         <div className="flex items-center space-x-2.5">
-          <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+          <div className="p-2 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 rounded-lg">
             <GitCommit className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h3 className="font-bold text-sm text-slate-800">實驗 GitHub Workspace</h3>
-              <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono">
+              <h3 className="font-bold text-sm text-slate-800 dark:text-white">實驗 GitHub Workspace</h3>
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-mono">
                 {repositoryFullName}
               </span>
               {isCourseMode && (
-                <span className="text-[11px] px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-mono border border-blue-200">
+                <span className="text-[11px] px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-mono border border-blue-200 dark:border-blue-800">
                   工作區：{experiment.experiment_code}
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-400 dark:text-slate-400 mt-0.5">
               同學共同維護的實驗儲存庫。每次儲存或上傳將產生真實 GitHub Git Commit。
             </p>
           </div>
@@ -768,7 +768,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
           <button
             onClick={() => handleRefreshWorkspace()}
             disabled={treeLoading}
-            className="inline-flex items-center space-x-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+            className="inline-flex items-center space-x-1.5 text-xs font-medium bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
             title="重新取得真實 GitHub Workspace 檔案樹"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${treeLoading ? 'animate-spin text-blue-600' : ''}`} />
@@ -805,25 +805,25 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
 
       {/* 最近一次操作回饋 (展示真實 Commit SHA) */}
       {lastOperation && (
-        <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl flex items-center justify-between text-xs text-emerald-900 shadow-xs animate-fadeIn">
+        <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-3 rounded-xl flex items-center justify-between text-xs text-emerald-900 dark:text-emerald-200 shadow-xs animate-fadeIn">
           <div className="flex items-center space-x-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>
               操作成功（{lastOperation.action}）：
-              <code className="bg-emerald-100/80 px-1 py-0.5 rounded font-mono ml-1 font-semibold">
+              <code className="bg-emerald-100/80 dark:bg-emerald-900/60 px-1 py-0.5 rounded font-mono ml-1 font-semibold">
                 {lastOperation.path}
               </code>
             </span>
-            <span className="text-emerald-600">|</span>
+            <span className="text-emerald-600 dark:text-emerald-500">|</span>
             <span className="flex items-center space-x-1">
               <span>Commit:</span>
-              <code className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-emerald-300 text-emerald-800">
+              <code className="font-mono font-bold bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300">
                 {lastOperation.commit_sha.slice(0, 7)}
               </code>
             </span>
             <button
               onClick={() => handleCopySha(lastOperation.commit_sha)}
-              className="text-emerald-700 hover:text-emerald-900 p-1 rounded hover:bg-emerald-100 transition-colors cursor-pointer"
+              className="text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 dark:hover:text-emerald-100 p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors cursor-pointer"
               title="複製完整 40 位元 Commit SHA"
             >
               {copiedSha === lastOperation.commit_sha ? (
@@ -834,7 +834,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center space-x-2 text-[11px] text-emerald-700">
+          <div className="flex items-center space-x-2 text-[11px] text-emerald-700 dark:text-emerald-300">
             <Clock className="w-3 h-3" />
             <span>{lastOperation.time}</span>
             {repositoryFullName && (
@@ -842,7 +842,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                 href={`https://github.com/${repositoryFullName}/commit/${lastOperation.commit_sha}`}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center space-x-1 text-emerald-800 underline hover:text-emerald-950 font-medium ml-2"
+                className="inline-flex items-center space-x-1 text-emerald-800 dark:text-emerald-300 underline hover:text-emerald-950 dark:hover:text-emerald-100 font-medium ml-2"
               >
                 <span>在 GitHub 查看 Commit</span>
                 <ExternalLink className="w-3 h-3" />
@@ -855,13 +855,13 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
       {/* 主體區塊：左側檔案樹 + 右側檢視與編輯器 */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* 左側：檔案樹 */}
-        <div className="lg:col-span-4 bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs flex flex-col h-[650px]">
-          <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100">
-            <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-700">
-              <Folder className="w-3.5 h-3.5 text-blue-600" />
+        <div className="lg:col-span-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3.5 shadow-xs flex flex-col h-[650px] transition-colors">
+          <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100 dark:border-slate-700/60">
+            <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+              <Folder className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
               <span>儲存庫檔案樹</span>
             </div>
-            <span className="text-[11px] text-slate-400">
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">
               {rootItems.length} 個根目錄項目
             </span>
           </div>
@@ -883,35 +883,35 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
         </div>
 
         {/* 右側：檔案內容 / 編輯器 */}
-        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex flex-col h-[650px]">
+        <div className="lg:col-span-8 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 shadow-xs flex flex-col h-[650px] transition-colors">
           {selectedPath ? (
             <>
               {/* 檔案頭部資訊與操作列 */}
-              <div className="flex flex-wrap items-center justify-between pb-3 mb-3 border-b border-slate-200 gap-2">
+              <div className="flex flex-wrap items-center justify-between pb-3 mb-3 border-b border-slate-200 dark:border-slate-700 gap-2">
                 <div className="flex items-center space-x-2.5">
-                  <div className="p-1.5 bg-slate-100 text-slate-700 rounded-md">
+                  <div className="p-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-md">
                     {isImagePath(selectedPath) ? (
-                      <ImageIcon className="w-4 h-4 text-emerald-600" />
+                      <ImageIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                     ) : isMarkdownPath(selectedPath) ? (
-                      <FileText className="w-4 h-4 text-blue-600" />
+                      <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                     ) : (
-                      <FileCode className="w-4 h-4 text-slate-600" />
+                      <FileCode className="w-4 h-4 text-slate-600 dark:text-slate-400" />
                     )}
                   </div>
                   <div>
                     <div className="flex items-center space-x-2">
-                      <h4 className="font-mono text-xs font-bold text-slate-900">{selectedPath}</h4>
+                      <h4 className="font-mono text-xs font-bold text-slate-900 dark:text-white">{selectedPath}</h4>
                       {currentFile?.sha && (
                         <span
                           onClick={() => handleCopySha(currentFile.sha)}
-                          className="text-[10px] font-mono bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                          className="text-[10px] font-mono bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
                           title="點擊複製檔案 SHA"
                         >
                           SHA: {currentFile.sha.slice(0, 7)}
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center space-x-2 text-[11px] text-slate-400 mt-0.5">
+                    <div className="flex items-center space-x-2 text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
                       {currentFile?.size !== undefined && (
                         <span>大小: {formatFileSize(currentFile.size)}</span>
                       )}
@@ -920,7 +920,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                           href={`https://github.com/${repositoryFullName}/blob/main/${getScopedPath(selectedPath)}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center space-x-0.5 text-blue-600 hover:underline"
+                          className="inline-flex items-center space-x-0.5 text-blue-600 dark:text-blue-400 hover:underline"
                         >
                           <span>在 GitHub 開啟</span>
                           <ExternalLink className="w-2.5 h-2.5" />
@@ -933,13 +933,13 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                 {/* 模式切換與儲存按鈕 */}
                 <div className="flex items-center space-x-2">
                   {!isImagePath(selectedPath) && (
-                    <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-xs font-medium">
+                    <div className="flex items-center bg-slate-100 dark:bg-slate-700 p-0.5 rounded-lg text-xs font-medium">
                       <button
                         onClick={() => setEditorMode('view')}
                         className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
                           editorMode === 'view'
-                            ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                            : 'text-slate-600 hover:text-slate-900'
+                            ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs font-semibold'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                         }`}
                       >
                         <span className="flex items-center space-x-1">
@@ -958,10 +958,10 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                         disabled={!editPermission.allowed}
                         className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
                           editorMode === 'edit'
-                            ? 'bg-white text-blue-600 shadow-xs font-semibold'
+                            ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-xs font-semibold'
                             : editPermission.allowed
-                            ? 'text-slate-600 hover:text-slate-900'
-                            : 'text-slate-300 cursor-not-allowed'
+                            ? 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                            : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
                         }`}
                         title={!editPermission.allowed ? editPermission.reason : '切換為編輯模式'}
                       >
@@ -997,8 +997,8 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                       disabled={selectedPath.startsWith('raw/')}
                       className={`inline-flex items-center space-x-1 text-xs px-2.5 py-1.5 rounded-lg border transition-colors cursor-pointer ${
                         selectedPath.startsWith('raw/')
-                          ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-slate-50'
-                          : 'border-rose-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300'
+                          ? 'border-slate-200 dark:border-slate-700 text-slate-300 dark:text-slate-600 cursor-not-allowed bg-slate-50 dark:bg-slate-900'
+                          : 'border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:border-rose-300 dark:hover:border-rose-700'
                       }`}
                       title={selectedPath.startsWith('raw/') ? '原始數據保護區禁止刪除' : '刪除此檔案並提交 Commit 至 GitHub'}
                     >
@@ -1011,9 +1011,9 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
 
               {/* 409 Conflict 衝突警示橫幅 */}
               {conflictOccurred && (
-                <div className="bg-amber-50 border-2 border-amber-300 p-3.5 rounded-xl mb-3 flex items-center justify-between text-xs text-amber-900 animate-fadeIn">
+                <div className="bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-700 p-3.5 rounded-xl mb-3 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200 animate-fadeIn">
                   <div className="flex items-center space-x-2">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                    <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
                     <div>
                       <p className="font-bold">樂觀鎖衝突 (409 Conflict)</p>
                       <p className="mt-0.5">
@@ -1033,8 +1033,8 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
 
               {/* 權限不符提示橫幅 (例如 Separate Report 他人報告或 Raw 聖域) */}
               {!editPermission.allowed && (
-                <div className="bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg mb-3 flex items-center space-x-2 text-xs text-slate-600">
-                  <ShieldAlert className="w-4 h-4 text-slate-400 shrink-0" />
+                <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-3 py-2 rounded-lg mb-3 flex items-center space-x-2 text-xs text-slate-600 dark:text-slate-300">
+                  <ShieldAlert className="w-4 h-4 text-slate-400 dark:text-slate-500 shrink-0" />
                   <span>{editPermission.reason}</span>
                 </div>
               )}
@@ -1042,14 +1042,14 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
               {/* 內容區域 */}
               <div className="flex-1 overflow-y-auto min-h-0">
                 {fileLoading ? (
-                  <div className="flex flex-col items-center justify-center h-full space-y-2 text-slate-400">
+                  <div className="flex flex-col items-center justify-center h-full space-y-2 text-slate-400 dark:text-slate-500">
                     <RefreshCw className="w-7 h-7 animate-spin text-blue-500" />
                     <span className="text-xs">正在從 GitHub 讀取檔案內容...</span>
                   </div>
                 ) : isImagePath(selectedPath) ? (
                   /* 圖片展示區 */
-                  <div className="flex flex-col items-center justify-center p-6 space-y-4 bg-slate-50 rounded-xl border border-slate-200 h-full">
-                    <div className="max-w-md max-h-96 overflow-hidden rounded-lg shadow-sm border border-slate-200 bg-white p-2">
+                  <div className="flex flex-col items-center justify-center p-6 space-y-4 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-700 h-full">
+                    <div className="max-w-md max-h-96 overflow-hidden rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2">
                       <img
                         src={
                           currentFile?.content_base64
@@ -1070,9 +1070,9 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                         style={{ display: 'none' }}
                         className="flex flex-col items-center justify-center py-12 px-4 text-center space-y-2"
                       >
-                        <ImageIcon className="w-10 h-10 text-slate-400" />
-                        <p className="text-xs font-semibold text-slate-700">圖片載入失敗</p>
-                        <p className="text-[11px] text-slate-400 max-w-xs">
+                        <ImageIcon className="w-10 h-10 text-slate-400 dark:text-slate-500" />
+                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">圖片載入失敗</p>
+                        <p className="text-[11px] text-slate-400 dark:text-slate-500 max-w-xs">
                           可點擊下方按鈕在 GitHub 檢視高解析原圖。
                         </p>
                       </div>
@@ -1083,7 +1083,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                         href={`https://github.com/${repositoryFullName}/blob/main/${getScopedPath(selectedPath)}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg transition-colors shadow-xs"
+                        className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2 rounded-lg transition-colors shadow-xs"
                       >
                         <span>在 GitHub 檢視原始圖片</span>
                         <ExternalLink className="w-3.5 h-3.5" />
@@ -1094,29 +1094,29 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                   /* 文字檔編輯器 */
                   <div className="flex flex-col h-full space-y-2.5">
                     <div className="flex items-center space-x-2">
-                      <label className="text-xs font-medium text-slate-600 shrink-0">Commit 說明:</label>
+                      <label className="text-xs font-medium text-slate-600 dark:text-slate-300 shrink-0">Commit 說明:</label>
                       <input
                         type="text"
                         value={commitMessage}
                         onChange={(e) => setCommitMessage(e.target.value)}
                         placeholder="例：更新實驗數據、修訂實驗報告"
-                        className="flex-1 px-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-sans"
+                        className="flex-1 px-3 py-1.5 text-xs border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-sans"
                       />
                     </div>
                     <textarea
                       value={editContent}
                       onChange={(e) => setEditContent(e.target.value)}
-                      className="flex-1 w-full p-3 font-mono text-xs text-slate-800 bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 resize-none leading-relaxed"
+                      className="flex-1 w-full p-3 font-mono text-xs text-slate-800 dark:text-slate-100 bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 resize-none leading-relaxed"
                       placeholder="請輸入文字或程式碼..."
                     />
                   </div>
                 ) : (
                   /* 檔案檢視模式 (Markdown 或 純文字) */
-                  <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-200 h-full overflow-y-auto">
+                  <div className="bg-slate-50/70 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-slate-700 h-full overflow-y-auto">
                     {isMarkdownPath(selectedPath) ? (
                       <SimpleMarkdownViewer content={currentFile?.content || ''} />
                     ) : (
-                      <pre className="text-xs font-mono text-slate-800 whitespace-pre-wrap break-all leading-relaxed">
+                      <pre className="text-xs font-mono text-slate-800 dark:text-slate-200 whitespace-pre-wrap break-all leading-relaxed">
                         <code>{currentFile?.content || ''}</code>
                       </pre>
                     )}
@@ -1125,12 +1125,12 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
               </div>
             </>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
-              <div className="p-4 bg-slate-50 rounded-full text-slate-400">
+            <div className="flex flex-col items-center justify-center h-full text-slate-400 dark:text-slate-500 space-y-3">
+              <div className="p-4 bg-slate-50 dark:bg-slate-700 rounded-full text-slate-400 dark:text-slate-300">
                 <FileText className="w-8 h-8" />
               </div>
-              <p className="text-sm font-medium text-slate-600">請從左側檔案樹點選檔案</p>
-              <p className="text-xs text-slate-400 text-center max-w-xs">
+              <p className="text-sm font-medium text-slate-600 dark:text-slate-300">請從左側檔案樹點選檔案</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 text-center max-w-xs">
                 點選文字檔可進行閱讀與修改；點選照片可預覽圖檔。
               </p>
             </div>
@@ -1140,43 +1140,43 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
 
       {/* 模態視窗 1：上傳原始數據 (Raw Data Sanctuary) */}
       {isRawModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-700 transition-colors">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
               <div className="flex items-center space-x-2">
-                <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg">
+                <div className="p-1.5 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 rounded-lg">
                   <Lock className="w-4 h-4" />
                 </div>
-                <h3 className="font-bold text-base text-slate-900">上傳原始資料至 raw/</h3>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">上傳原始資料至 raw/</h3>
               </div>
               <button
                 onClick={() => setIsRawModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+                className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 p-1 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleUploadRawSubmit} className="space-y-4 mt-4">
-              <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-xs text-amber-900 flex items-start space-x-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-3 rounded-xl text-xs text-amber-900 dark:text-amber-200 flex items-start space-x-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-bold">原始數據保護原則</p>
-                  <p className="mt-0.5">
+                  <p className="mt-0.5 text-amber-800 dark:text-amber-300">
                     原始量測數據將自動存放於 <code>raw/</code>。此資料夾為原始實驗數據，為避免意外修改，檔案無法直接編輯。如需新增資料，請使用「上傳原始數據」。
                   </p>
                 </div>
               </div>
 
               {rawError && (
-                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-center space-x-2">
+                <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300 flex items-center space-x-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{rawError}</span>
                 </div>
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1.5">
                   選擇原始實驗數據檔案 <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -1189,13 +1189,13 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                       setRawMessage(`upload raw data: ${f.name}`);
                     }
                   }}
-                  className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer border border-slate-200 rounded-lg p-1.5"
+                  className="w-full text-xs text-slate-500 dark:text-slate-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 dark:file:bg-emerald-950/60 file:text-emerald-700 dark:file:text-emerald-300 hover:file:bg-emerald-100 dark:hover:file:bg-emerald-900/60 cursor-pointer border border-slate-200 dark:border-slate-700 rounded-lg p-1.5 bg-white dark:bg-slate-900"
                 />
-                <p className="text-[11px] text-slate-400 mt-1">支援 CSV, TXT, JSON, DAT 等原始量測檔案</p>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">支援 CSV, TXT, JSON, DAT 等原始量測檔案</p>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1.5">
                   Commit 說明 (可選)
                 </label>
                 <input
@@ -1203,15 +1203,15 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                   value={rawMessage}
                   onChange={(e) => setRawMessage(e.target.value)}
                   placeholder="例：上傳示波器取樣原始數據"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                  className="w-full px-3 py-2 text-xs border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100 dark:border-slate-700">
                 <button
                   type="button"
                   onClick={() => setIsRawModalOpen(false)}
-                  className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                  className="px-4 py-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
                 >
                   取消
                 </button>
@@ -1230,37 +1230,37 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
 
       {/* 模態視窗 2：上傳實驗照片 */}
       {isPhotoModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 dark:border-slate-700 transition-colors">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
               <div className="flex items-center space-x-2">
-                <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
+                <div className="p-1.5 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 rounded-lg">
                   <ImageIcon className="w-4 h-4" />
                 </div>
-                <h3 className="font-bold text-base text-slate-900">上傳照片至 photos/</h3>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">上傳照片至 photos/</h3>
               </div>
               <button
                 onClick={() => setIsPhotoModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+                className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 p-1 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleUploadPhotoSubmit} className="space-y-4 mt-4">
-              <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl text-xs text-blue-900">
+              <div className="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 p-3 rounded-xl text-xs text-blue-900 dark:text-blue-200">
                 照片將自動存入 <code>photos/</code> 目錄。單檔限制上限為 5MB。
               </div>
 
               {photoError && (
-                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-center space-x-2">
+                <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300 flex items-center space-x-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{photoError}</span>
                 </div>
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1.5">
                   選擇照片檔案 <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -1283,22 +1283,22 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                       setPhotoPreviewUrl(null);
                     }
                   }}
-                  className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-200 rounded-lg p-1.5"
+                  className="w-full text-xs text-slate-500 dark:text-slate-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 dark:file:bg-blue-950/60 file:text-blue-700 dark:file:text-blue-300 hover:file:bg-blue-100 dark:hover:file:bg-blue-900/60 cursor-pointer border border-slate-200 dark:border-slate-700 rounded-lg p-1.5 bg-white dark:bg-slate-900"
                 />
-                <p className="text-[11px] text-slate-400 mt-1">
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
                   支援 JPG, PNG, WEBP（單檔不可超過 5MB）
                 </p>
               </div>
 
               {photoPreviewUrl && (
-                <div className="p-2 border border-slate-200 rounded-lg bg-slate-50 text-center">
+                <div className="p-2 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900 text-center">
                   <img
                     src={photoPreviewUrl}
                     alt="Preview"
                     className="max-h-36 mx-auto rounded object-contain"
                   />
                   {photoFile && (
-                    <span className="text-[11px] text-slate-400 mt-1 block">
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500 mt-1 block">
                       {photoFile.name} ({formatFileSize(photoFile.size)})
                     </span>
                   )}
@@ -1306,7 +1306,7 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1.5">
                   Commit 說明 (可選)
                 </label>
                 <input
@@ -1314,15 +1314,15 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                   value={photoMessage}
                   onChange={(e) => setPhotoMessage(e.target.value)}
                   placeholder="例：上傳電路接線圖照片"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 text-xs border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
-              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100 dark:border-slate-700">
                 <button
                   type="button"
                   onClick={() => setIsPhotoModalOpen(false)}
-                  className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                  className="px-4 py-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
                 >
                   取消
                 </button>
@@ -1341,36 +1341,36 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
 
       {/* 刪除檔案確認 Modal */}
       {isDeleteModalOpen && currentFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center space-x-2 text-rose-600">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-black/70 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150 transition-colors">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+              <div className="flex items-center space-x-2 text-rose-600 dark:text-rose-400">
                 <Trash2 className="w-5 h-5" />
-                <h3 className="text-base font-bold text-slate-900">確認刪除檔案</h3>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">確認刪除檔案</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setIsDeleteModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+                className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="space-y-3 text-xs">
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 space-y-1">
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg text-rose-800 dark:text-rose-200 space-y-1">
                 <p className="font-semibold">⚠️ 此操作將向遠端 GitHub 儲存庫提交刪除 Commit！</p>
-                <p className="text-[11px] text-rose-700">
+                <p className="text-[11px] text-rose-700 dark:text-rose-300">
                   目標路徑：<span className="font-mono font-bold">{currentFile.path}</span>
                 </p>
-                <p className="text-[11px] text-rose-600">
+                <p className="text-[11px] text-rose-600 dark:text-rose-400">
                   系統將以透明身分代理記錄您的 GitHub 帳號並寫入不可篡改的活動稽核日誌。
                 </p>
               </div>
 
               <form onSubmit={handleDeleteFile} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
                     Commit 說明 (Commit Message)
                   </label>
                   <input
@@ -1378,15 +1378,15 @@ export const WorkspaceManager: React.FC<WorkspaceManagerProps> = ({
                     value={deleteCommitMsg}
                     onChange={(e) => setDeleteCommitMsg(e.target.value)}
                     placeholder={`刪除檔案: ${currentFile.path}`}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-rose-500 font-mono"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-rose-500 font-mono"
                   />
                 </div>
 
-                <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100">
+                <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 dark:border-slate-700">
                   <button
                     type="button"
                     onClick={() => setIsDeleteModalOpen(false)}
-                    className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                    className="px-4 py-2 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
                   >
                     取消
                   </button>

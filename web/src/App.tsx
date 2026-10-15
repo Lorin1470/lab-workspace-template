@@ -7,6 +7,7 @@ import { SkillDownloadPage } from './components/SkillDownloadPage.tsx';
 import { Course, Experiment, AuthUser } from './types/index.ts';
 import { api, ApiError } from './api/client.ts';
 import { AlertCircle, CheckCircle2, X } from 'lucide-react';
+import { ThemeProvider } from './context/ThemeContext.tsx';
 
 type ViewMode = 'courses' | 'course-detail' | 'experiment-detail' | 'skill-download';
 
@@ -17,7 +18,7 @@ const getInitialView = (): ViewMode => {
   return 'courses';
 };
 
-export const App: React.FC = () => {
+const AppContent: React.FC = () => {
   const [view, setView] = useState<ViewMode>(getInitialView);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -183,7 +184,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col">
       {/* 頂部導覽列 */}
       <Navbar
         currentCourse={selectedCourse}
@@ -238,6 +239,8 @@ export const App: React.FC = () => {
             loading={coursesLoading}
             onRefresh={loadCourses}
             onSelectCourse={handleSelectCourse}
+            onSuccess={showSuccess}
+            onError={showError}
           />
         )}
 
@@ -286,10 +289,18 @@ export const App: React.FC = () => {
       </main>
 
       {/* 頁尾 */}
-      <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400">
+      <footer className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 py-6 text-center text-xs text-slate-400 dark:text-slate-500 transition-colors">
         <p>實驗課 GitHub 工作區系統 • 實驗課雲端工作區協作體系 • Powered by Cloudflare Pages & D1</p>
       </footer>
     </div>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 };
 

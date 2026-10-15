@@ -48,27 +48,27 @@ type TabType = "files" | "report" | "activity" | "download" | "members" | "repos
 const expStatusMap: Record<ExperimentStatus, { label: string; badgeClass: string; icon: string }> = {
   not_started: {
     label: "尚未開始",
-    badgeClass: "bg-slate-100 text-slate-600 border-slate-300",
+    badgeClass: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700",
     icon: "⬜",
   },
   in_progress: {
     label: "實驗進行中",
-    badgeClass: "bg-amber-50 text-amber-700 border-amber-300",
+    badgeClass: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800",
     icon: "🟡",
   },
   data_processing: {
     label: "資料整理中",
-    badgeClass: "bg-blue-50 text-blue-700 border-blue-300",
+    badgeClass: "bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-800",
     icon: "🔵",
   },
   report_writing: {
     label: "報告撰寫中",
-    badgeClass: "bg-orange-50 text-orange-700 border-orange-300",
+    badgeClass: "bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-800",
     icon: "🟠",
   },
   completed: {
     label: "已完成",
-    badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-300",
+    badgeClass: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800",
     icon: "🟢",
   },
 };
@@ -281,12 +281,12 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
   return (
     <div className="space-y-6">
       {/* 頂部資訊列 */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm transition-colors">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start space-x-4">
             <button
               onClick={onBack}
-              className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition-colors cursor-pointer mt-1"
+              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors cursor-pointer mt-1"
               title="返回課程"
             >
               <ArrowLeft className="w-5 h-5" />
@@ -298,16 +298,16 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                     <button
                       type="button"
                       onClick={() => setIsSwitcherOpen(!isSwitcherOpen)}
-                      className="inline-flex items-center space-x-1 text-xs font-mono font-bold bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded hover:bg-blue-200 transition-colors cursor-pointer"
+                      className="inline-flex items-center space-x-1 text-xs font-mono font-bold bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 px-2.5 py-0.5 rounded hover:bg-blue-200 dark:hover:bg-blue-800/80 transition-colors cursor-pointer"
                       title="切換同課程實驗"
                     >
                       <span>{experiment.experiment_code.toUpperCase()}</span>
-                      <ChevronDown className="w-3 h-3 text-blue-600" />
+                      <ChevronDown className="w-3 h-3 text-blue-600 dark:text-blue-400" />
                     </button>
 
                     {isSwitcherOpen && (
-                      <div className="absolute left-0 mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-lg z-30 py-1 max-h-60 overflow-y-auto">
-                        <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                      <div className="absolute left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg z-30 py-1 max-h-60 overflow-y-auto">
+                        <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-700">
                           切換同課程實驗
                         </div>
                         {courseExperiments.map((exp) => (
@@ -320,18 +320,18 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                                 onSelectExperiment?.(exp, activeTab);
                               }
                             }}
-                            className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 transition-colors cursor-pointer ${
+                            className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer ${
                               exp.id === experiment.id
-                                ? "bg-blue-50/50 text-blue-700 font-semibold"
-                                : "text-slate-700"
+                                ? "bg-blue-50/50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-semibold"
+                                : "text-slate-700 dark:text-slate-200"
                             }`}
                           >
                             <div className="truncate mr-2">
                               <span className="font-mono font-bold">{exp.experiment_code}</span>
-                              <span className="ml-1.5 text-slate-500 truncate">{exp.name}</span>
+                              <span className="ml-1.5 text-slate-500 dark:text-slate-400 truncate">{exp.name}</span>
                             </div>
                             {exp.id === experiment.id && (
-                              <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                              <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
                             )}
                           </button>
                         ))}
@@ -339,31 +339,31 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                     )}
                   </div>
                 ) : (
-                  <span className="text-xs font-mono font-bold bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded">
+                  <span className="text-xs font-mono font-bold bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 px-2.5 py-0.5 rounded">
                     {experiment.experiment_code.toUpperCase()}
                   </span>
                 )}
                 {course && (
-                  <span className="text-xs text-slate-500 font-medium">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
                     {course.name} ({course.course_code})
                   </span>
                 )}
                 <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${statusInfo.badgeClass}`}>
                   {statusInfo.icon} {statusInfo.label}
                 </span>
-                <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600">
                   {experiment.report_mode === "shared" ? "共同報告模式" : "個別報告模式"}
                 </span>
               </div>
 
-              <h2 className="text-2xl font-bold text-slate-900 mt-1.5">{experiment.name}</h2>
-              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1 font-mono">
+              <h2 className="text-2xl font-bold text-slate-900 dark:text-white mt-1.5">{experiment.name}</h2>
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono">
                 {resolvedRepo && (
                   <a
                     href={`https://github.com/${resolvedRepo}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-800 font-semibold"
+                    className="inline-flex items-center space-x-1 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-semibold"
                   >
                     <FolderGit2 className="w-3.5 h-3.5" />
                     <span>{resolvedRepo}</span>
@@ -371,7 +371,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   </a>
                 )}
                 {isCourseMode && (
-                  <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
+                  <span className="bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600">
                     工作區目錄：{experiment.experiment_code.toUpperCase()}
                   </span>
                 )}
@@ -387,7 +387,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 href={`https://github.com/${resolvedRepo}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center space-x-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-colors bg-slate-900 hover:bg-slate-800 text-white"
+                className="inline-flex items-center space-x-1.5 text-xs font-semibold px-3 py-2 rounded-lg transition-colors bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 text-white border dark:border-slate-600"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
                 <span>開啟 GitHub Repo</span>
@@ -397,7 +397,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         </div>
 
         {/* 分頁導覽列 */}
-        <div className="flex border-b border-slate-200 mt-6 -mb-6 space-x-1 overflow-x-auto">
+        <div className="flex border-b border-slate-200 dark:border-slate-700 mt-6 -mb-6 space-x-1 overflow-x-auto">
           {[
             { id: "files", label: "📁 工作區 (Workspace)", icon: FolderTree },
             { id: "report", label: "📄 實驗報告", icon: FileText },
@@ -413,8 +413,8 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 onClick={() => setActiveTab(tab.id as TabType)}
                 className={`flex items-center space-x-2 py-3 px-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
                   isActive
-                    ? "border-blue-600 text-blue-600"
-                    : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+                    ? "border-blue-600 dark:border-blue-500 text-blue-600 dark:text-blue-400"
+                    : "border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600"
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -426,7 +426,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
       </div>
 
       {/* 分頁內容 */}
-      <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm min-h-[420px]">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm min-h-[420px] transition-colors">
         {/* 1. 工作區 (Workspace) */}
         {activeTab === "files" && (
           <WorkspaceManager
@@ -443,17 +443,17 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         {/* 2. 實驗報告 */}
         {activeTab === "report" && (
           <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 gap-2">
-              <div className="flex items-center space-x-2 text-sm text-slate-600">
-                <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-700 gap-2">
+              <div className="flex items-center space-x-2 text-sm text-slate-600 dark:text-slate-300">
+                <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
                 <span>
                   報告檔案：
-                  <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs font-mono ml-1 text-slate-800">
+                  <code className="bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono ml-1 text-slate-800 dark:text-slate-200">
                     {currentReportPath}
                   </code>
                 </span>
                 {reportSha && (
-                  <span className="text-[10px] font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
+                  <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
                     SHA: {reportSha.slice(0, 7)}
                   </span>
                 )}
@@ -462,7 +462,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 <button
                   onClick={loadReport}
                   disabled={reportLoading}
-                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                   title="重新讀取實驗報告"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${reportLoading ? "animate-spin" : ""}`} />
@@ -471,7 +471,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
 
                 <button
                   onClick={() => setActiveTab("files")}
-                  className="inline-flex items-center space-x-1.5 text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer font-medium"
+                  className="inline-flex items-center space-x-1.5 text-xs bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer font-medium border border-blue-200 dark:border-blue-800"
                   title="前往工作區編輯報告"
                 >
                   <FolderTree className="w-3.5 h-3.5" />
@@ -480,7 +480,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
 
                 <button
                   onClick={() => window.print()}
-                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                  className="inline-flex items-center space-x-1.5 text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>列印 / 匯出 PDF</span>
@@ -489,21 +489,21 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             </div>
 
             {reportLoading && (
-              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400">
+              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400 dark:text-slate-500">
                 <RefreshCw className="w-7 h-7 animate-spin text-blue-500" />
                 <span className="text-sm">正在載入實驗報告 ({currentReportPath})...</span>
               </div>
             )}
 
             {!reportLoading && reportError && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center justify-between">
+              <div className="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-700 dark:text-red-300 flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{reportError}</span>
                 </div>
                 <button
                   onClick={loadReport}
-                  className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded font-semibold transition-colors cursor-pointer"
+                  className="px-3 py-1 bg-red-100 dark:bg-red-900/60 hover:bg-red-200 dark:hover:bg-red-800 text-red-800 dark:text-red-200 rounded font-semibold transition-colors cursor-pointer"
                 >
                   重試
                 </button>
@@ -511,11 +511,11 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             )}
 
             {!reportLoading && reportNotFound && (
-              <div className="border border-dashed border-slate-200 rounded-xl py-16 text-center space-y-3">
-                <FileText className="w-10 h-10 mx-auto text-slate-300" />
-                <p className="text-base font-bold text-slate-700">尚未建立實驗報告</p>
-                <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-                  此實驗工作區尚未建立報告檔案（<code className="font-mono text-slate-700">{currentReportPath}</code>）。
+              <div className="border border-dashed border-slate-200 dark:border-slate-700 rounded-xl py-16 text-center space-y-3">
+                <FileText className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600" />
+                <p className="text-base font-bold text-slate-700 dark:text-slate-200">尚未建立實驗報告</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+                  此實驗工作區尚未建立報告檔案（<code className="font-mono text-slate-700 dark:text-slate-300">{currentReportPath}</code>）。
                   您可以直接在瀏覽器工作區中建立並編輯報告，存檔後系統會自動同步至雲端。
                 </p>
                 <div className="pt-2">
@@ -531,15 +531,15 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             )}
 
             {!reportLoading && !reportNotFound && !reportError && reportContent !== null && (
-              <article className="prose max-w-none text-slate-800 space-y-4">
-                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-sm space-y-1">
+              <article className="prose max-w-none text-slate-800 dark:text-slate-100 space-y-4">
+                <div className="bg-slate-50 dark:bg-slate-900/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700 text-sm space-y-1">
                   <div><strong>實驗名稱</strong>：{experiment.name} ({experiment.experiment_code})</div>
                   <div><strong>報告模式</strong>：{experiment.report_mode === "shared" ? "全組共同撰寫 (shared)" : "個別報告模式 (separate)"}</div>
-                  <div><strong>報告檔案</strong>：<code className="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded">{currentReportPath}</code></div>
+                  <div><strong>報告檔案</strong>：<code className="font-mono text-xs bg-slate-100 dark:bg-slate-700 px-1 py-0.5 rounded">{currentReportPath}</code></div>
                   <div><strong>所屬 Repository</strong>：{resolvedRepo}</div>
                 </div>
 
-                <div className="border-t border-slate-100 pt-4">
+                <div className="border-t border-slate-100 dark:border-slate-700/60 pt-4">
                   <SimpleMarkdownViewer content={reportContent} />
                 </div>
               </article>
@@ -550,17 +550,17 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         {/* 3. 活動紀錄 */}
         {activeTab === "activity" && (
           <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700/60 gap-2">
               <div className="space-y-0.5">
                 <div className="flex items-center space-x-2">
-                  <span className="text-xs text-slate-500 font-medium">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
                     工作區操作稽核日誌（Append-Only 唯讀紀錄）
                   </span>
-                  <span className="text-[10px] font-mono bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-semibold border border-blue-100">
+                  <span className="text-[10px] font-mono bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded font-semibold border border-blue-100 dark:border-blue-900">
                     Cloudflare D1 持久化
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">
                   所有寫入操作均已通過伺服器端 Session 防偽校驗與 Commit SHA 綁定保護。
                 </p>
               </div>
@@ -571,13 +571,13 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                   placeholder="搜尋摘要、發起人或目標..."
                   value={activitySearchKeyword}
                   onChange={(e) => setActivitySearchKeyword(e.target.value)}
-                  className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 w-44 bg-slate-50 focus:bg-white focus:outline-none focus:border-blue-500"
+                  className="text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 w-44 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:bg-white dark:focus:bg-slate-800 focus:outline-none focus:border-blue-500"
                 />
 
                 <select
                   value={activityActionFilter}
                   onChange={(e) => setActivityActionFilter(e.target.value)}
-                  className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50 text-slate-700"
+                  className="text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200"
                 >
                   <option value="">全部動作類型</option>
                   <option value="file_created">建立檔案 (file_created)</option>
@@ -590,7 +590,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                 <button
                   onClick={loadActivityLogs}
                   disabled={logsLoading}
-                  className="inline-flex items-center space-x-1 text-xs border border-slate-200 hover:bg-slate-50 text-slate-600 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center space-x-1 text-xs border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                   title="重新整理活動日誌"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${logsLoading ? "animate-spin" : ""}`} />
@@ -599,12 +599,12 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
             </div>
 
             {logsLoading ? (
-              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400">
+              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400 dark:text-slate-500">
                 <RefreshCw className="w-7 h-7 animate-spin text-blue-500" />
                 <span className="text-sm">正在載入活動日誌...</span>
               </div>
             ) : activityLogs.length === 0 ? (
-              <div className="text-center py-12 text-slate-400 text-xs">
+              <div className="text-center py-12 text-slate-400 dark:text-slate-500 text-xs">
                 {activityActionFilter || activitySearchKeyword ? "找不到符合過濾條件的紀錄" : "此實驗專案目前尚無任何活動日誌。"}
               </div>
             ) : (
@@ -623,33 +623,33 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                       key={log.id}
                       className={`p-3.5 rounded-xl border transition-colors flex items-start space-x-3 ${
                         isRejected
-                          ? "border-red-200 bg-red-50/40"
-                          : "border-slate-200 bg-white hover:bg-slate-50/60"
+                          ? "border-red-200 dark:border-red-800 bg-red-50/40 dark:bg-red-950/30"
+                          : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 hover:bg-slate-50/60 dark:hover:bg-slate-700/40"
                       }`}
                     >
                       <div className="flex-1 space-y-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className="text-xs font-bold text-slate-900 font-mono">
+                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 font-mono">
                             @{log.actor_name || log.actor_id}
                           </span>
-                          <span className="text-[11px] px-2 py-0.5 rounded font-mono font-semibold bg-slate-100 text-slate-700">
+                          <span className="text-[11px] px-2 py-0.5 rounded font-mono font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
                             {log.action}
                           </span>
 
-                          <span className="text-xs text-slate-400 font-mono">{log.timestamp}</span>
+                          <span className="text-xs text-slate-400 dark:text-slate-500 font-mono">{log.timestamp}</span>
                         </div>
 
-                        <p className="text-sm text-slate-700">{log.summary}</p>
+                        <p className="text-sm text-slate-700 dark:text-slate-200">{log.summary}</p>
 
                         {isRejected && detailsObj?.rejection_reason && (
-                          <div className="text-xs text-red-600 bg-red-50 px-2.5 py-1 rounded border border-red-200 font-mono">
+                          <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 px-2.5 py-1 rounded border border-red-200 dark:border-red-800 font-mono">
                             攔截原因：{detailsObj.rejection_reason}
                           </div>
                         )}
 
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 font-mono pt-0.5">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400 font-mono pt-0.5">
                           {log.target && (
-                            <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[11px]">
+                            <span className="bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-1.5 py-0.5 rounded text-[11px]">
                               🎯 目標: {log.target}
                             </span>
                           )}
@@ -660,7 +660,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                               href={`https://github.com/${log.repo_name || resolvedRepo}/commit/${log.commit_sha}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-800 font-semibold"
+                              className="inline-flex items-center space-x-1 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-semibold"
                             >
                               <span>Commit: {log.commit_sha.slice(0, 7)}</span>
                               <ExternalLink className="w-3 h-3" />
@@ -669,12 +669,12 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                         </div>
 
                         {filesChanged.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400 font-mono">
-                            <span className="text-[11px] text-slate-400">異動檔案:</span>
+                          <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500 font-mono">
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500">異動檔案:</span>
                             {filesChanged.map((file, idx) => (
                               <span
                                 key={idx}
-                                className="bg-slate-50 border border-slate-200 px-1.5 py-0.2 rounded text-[11px] text-slate-600"
+                                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.2 rounded text-[11px] text-slate-600 dark:text-slate-400"
                               >
                                 {file}
                               </span>
@@ -693,67 +693,67 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
         {/* 4. 打包下載 */}
         {activeTab === "download" && (
           <div className="space-y-4">
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               免經 R2 中轉的一鍵打包串流下載：
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 transition-colors">
+              <div className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 dark:hover:border-blue-500 transition-colors">
                 <div>
-                  <h4 className="font-semibold text-sm text-slate-800">📸 打包下載全部照片</h4>
-                  <p className="text-xs text-slate-400 mt-1">打包 photos/ 目錄中的所有量測照片</p>
+                  <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-100">📸 打包下載全部照片</h4>
+                  <p className="text-xs text-slate-400 dark:text-slate-400 mt-1">打包 photos/ 目錄中的所有量測照片</p>
                 </div>
                 <button
                   onClick={() => handleDownloadZip("photos")}
-                  className="mt-4 w-full bg-slate-100 hover:bg-blue-50 hover:text-blue-600 text-slate-700 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                  className="mt-4 w-full bg-slate-100 dark:bg-slate-700 hover:bg-blue-50 dark:hover:bg-blue-900/50 hover:text-blue-600 dark:hover:text-blue-300 text-slate-700 dark:text-slate-200 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>下載 photos.zip</span>
                 </button>
               </div>
 
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 transition-colors">
+              <div className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 dark:hover:border-blue-500 transition-colors">
                 <div>
-                  <h4 className="font-semibold text-sm text-slate-800">📁 下載量測原始數據</h4>
-                  <p className="text-xs text-slate-400 mt-1">打包 raw/ 目錄中的所有原始 CSV/數據</p>
+                  <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-100">📁 下載量測原始數據</h4>
+                  <p className="text-xs text-slate-400 dark:text-slate-400 mt-1">打包 raw/ 目錄中的所有原始 CSV/數據</p>
                 </div>
                 <button
                   onClick={() => handleDownloadZip("raw")}
-                  className="mt-4 w-full bg-slate-100 hover:bg-emerald-50 hover:text-emerald-600 text-slate-700 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                  className="mt-4 w-full bg-slate-100 dark:bg-slate-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/50 hover:text-emerald-600 dark:hover:text-emerald-300 text-slate-700 dark:text-slate-200 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>下載 raw.zip</span>
                 </button>
               </div>
 
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 transition-colors">
+              <div className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-4 flex flex-col justify-between hover:border-blue-400 dark:hover:border-blue-500 transition-colors">
                 <div>
-                  <h4 className="font-semibold text-sm text-slate-800">📦 下載完整實驗專案包</h4>
-                  <p className="text-xs text-slate-400 mt-1">包含所有數據、圖表、報告與工作區檔案</p>
+                  <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-100">📦 下載完整實驗專案包</h4>
+                  <p className="text-xs text-slate-400 dark:text-slate-400 mt-1">包含所有數據、圖表、報告與工作區檔案</p>
                 </div>
                 <button
                   onClick={() => handleDownloadZip("all")}
-                  className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                  className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>下載完整 ZIP</span>
                 </button>
               </div>
 
-              <div className="bg-white p-5 rounded-xl border border-slate-200 flex flex-col justify-between">
+              <div className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col justify-between">
                 <div>
-                  <div className="flex items-center space-x-1.5 text-purple-600 mb-1">
+                  <div className="flex items-center space-x-1.5 text-purple-600 dark:text-purple-400 mb-1">
                     <Bot className="w-4 h-4" />
                     <span className="text-xs font-bold uppercase tracking-wider">AI Agent Skill</span>
                   </div>
-                  <h4 className="font-semibold text-slate-800 text-sm">github-workspace Skill</h4>
-                  <p className="text-xs text-slate-400 mt-1">取得標準 Agent Skill 檔案、ZIP 壓縮包與精簡安裝提示詞</p>
+                  <h4 className="font-semibold text-slate-800 dark:text-slate-100 text-sm">github-workspace Skill</h4>
+                  <p className="text-xs text-slate-400 dark:text-slate-400 mt-1">取得標準 Agent Skill 檔案、ZIP 壓縮包與精簡安裝提示詞</p>
                 </div>
                 <button
                   type="button"
                   onClick={onNavigateSkillDownload}
-                  className="mt-4 w-full bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                  className="mt-4 w-full bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-xs font-semibold py-2 rounded-lg transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
                 >
-                  <Bot className="w-3.5 h-3.5 text-purple-600" />
+                  <Bot className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
                   <span>前往 Skill 下載頁</span>
                 </button>
               </div>
@@ -761,24 +761,23 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
           </div>
         )}
 
-
         {/* 5. 實驗成員 (唯讀名單) */}
         {activeTab === "members" && (
           <div className="space-y-4">
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               指派至本實驗的組員清單。
             </p>
 
             {membersLoading ? (
-              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400 bg-white rounded-xl border border-slate-200">
+              <div className="flex flex-col items-center justify-center py-16 space-y-3 text-slate-400 dark:text-slate-500 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
                 <RefreshCw className="w-7 h-7 animate-spin text-blue-500" />
                 <span className="text-sm">正在載入成員名單...</span>
               </div>
             ) : (
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+              <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden shadow-xs">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                    <thead className="bg-slate-50 dark:bg-slate-900/70 border-b border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
                       <tr>
                         <th className="px-5 py-3">GitHub 使用者</th>
                         <th className="px-5 py-3">GitHub ID</th>
@@ -787,37 +786,37 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                         <th className="px-5 py-3">狀態</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
                       {members.map((m) => {
                         const isSelf = user && String(user.github_id) === String(m.github_id);
                         return (
-                          <tr key={m.id} className="hover:bg-slate-50/80 transition-colors">
-                            <td className="px-5 py-3.5 font-medium text-slate-900 flex items-center space-x-2">
+                          <tr key={m.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/40 transition-colors">
+                            <td className="px-5 py-3.5 font-medium text-slate-900 dark:text-slate-100 flex items-center space-x-2">
                               <span>@{m.username}</span>
                               {isSelf && (
-                                <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.2 rounded font-semibold">
+                                <span className="text-[10px] bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 px-1.5 py-0.2 rounded font-semibold">
                                   你自己
                                 </span>
                               )}
                             </td>
-                            <td className="px-5 py-3.5 font-mono text-xs text-slate-500">{m.github_id}</td>
+                            <td className="px-5 py-3.5 font-mono text-xs text-slate-500 dark:text-slate-400">{m.github_id}</td>
                             <td className="px-5 py-3.5">
-                              <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                              <span className="px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-600">
                                 {m.role === "assistant" ? "助教" : "學生"}
                               </span>
                             </td>
-                            <td className="px-5 py-3.5 font-medium text-slate-700">
-                              {m.group_name || <span className="text-slate-400 text-xs">未分組</span>}
+                            <td className="px-5 py-3.5 font-medium text-slate-700 dark:text-slate-300">
+                              {m.group_name || <span className="text-slate-400 dark:text-slate-500 text-xs">未分組</span>}
                             </td>
                             <td className="px-5 py-3.5">
                               {m.status === "active" ? (
-                                <span className="inline-flex items-center space-x-1 text-xs text-emerald-700">
+                                <span className="inline-flex items-center space-x-1 text-xs text-emerald-700 dark:text-emerald-400">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                   <span>正常</span>
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center space-x-1 text-xs text-slate-500">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                                <span className="inline-flex items-center space-x-1 text-xs text-slate-500 dark:text-slate-400">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500"></span>
                                   <span>已停用</span>
                                 </span>
                               )}
@@ -827,7 +826,7 @@ export const ExperimentDetail: React.FC<ExperimentDetailProps> = ({
                       })}
                       {members.length === 0 && (
                         <tr>
-                          <td colSpan={5} className="text-center py-8 text-slate-400 text-xs">
+                          <td colSpan={5} className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs">
                             目前尚無任何實驗組員
                           </td>
                         </tr>

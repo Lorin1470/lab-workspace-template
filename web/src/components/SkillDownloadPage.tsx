@@ -19,13 +19,13 @@ export const SkillDownloadPage: React.FC<SkillDownloadPageProps> = ({
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="inline-flex items-center space-x-2 text-xs font-semibold text-slate-600 hover:text-blue-600 bg-white border border-slate-200 hover:border-blue-300 px-3.5 py-2 rounded-xl transition-colors cursor-pointer shadow-xs"
+          className="inline-flex items-center space-x-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-600 px-3.5 py-2 rounded-xl transition-colors cursor-pointer shadow-xs"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>返回課程列表</span>
         </button>
 
-        <div className="text-xs text-slate-400 font-mono hidden sm:block">
+        <div className="text-xs text-slate-400 dark:text-slate-500 font-mono hidden sm:block">
           /skill-download
         </div>
       </div>
